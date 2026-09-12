@@ -1,0 +1,26 @@
+{
+  "name": "discord-coding-assistant",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --parallel typecheck",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "db:generate": "pnpm --filter @dca/db generate",
+    "db:migrate": "pnpm --filter @dca/db migrate",
+    "infra:up": "docker compose -f infra/compose.yml up -d",
+    "infra:down": "docker compose -f infra/compose.yml down"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.13",
+    "@types/node": "^22.20.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}

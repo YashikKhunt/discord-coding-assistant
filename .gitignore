@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.turbo/
+*.log
+.DS_Store
+
+# secrets and local data
+.env
+.env.*
+!.env.example
+data/
+
+# local Claude Code settings
+.claude/settings.local.json
