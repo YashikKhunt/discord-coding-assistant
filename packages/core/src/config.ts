@@ -55,6 +55,11 @@ export const workerEnv = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
   SANDBOX_PROVIDER: z.enum(["docker"]).default("docker"),
   SANDBOX_RUNTIME: z.enum(["runc", "runsc"]).default("runc"),
+  /** Internal Docker network shared only with the egress proxy. Empty = no network at all. */
+  SANDBOX_NETWORK: z.string().default(""),
+  SANDBOX_PROXY_URL: z.string().default(""),
+  SANDBOX_IMAGE_NODE: z.string().default("dca-sandbox-node:latest"),
+  SANDBOX_IMAGE_PYTHON: z.string().default("dca-sandbox-python:latest"),
   ATTACHMENTS_DIR: z.string().default("./data/attachments"),
   WORKSPACES_DIR: z.string().default("./data/workspaces"),
   RETENTION_DAYS: z.coerce.number().int().positive().default(30),

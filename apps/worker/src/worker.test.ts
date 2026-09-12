@@ -120,6 +120,27 @@ describe.skipIf(!DATABASE_URL)("worker (integration)", () => {
     expect(final.error).toBe("Cancelled by user");
   });
 
+  it("records a failed outcome returned before the job started running", async () => {
+    const job = await enqueue("setup-failure");
+    startWorker({
+      async run() {
+        return {
+          status: "failed",
+          error: "Ref `nope` not found",
+          result: { kind: "runtest", outcome: "error" },
+          iterations: 0,
+          costUsd: 0,
+        };
+      },
+    });
+    const final = await settled(job);
+    expect(final).toMatchObject({
+      status: "failed",
+      error: "Ref `nope` not found",
+      result: { kind: "runtest", outcome: "error" },
+    });
+  });
+
   it("marks jobs failed when the runner throws", async () => {
     const job = await enqueue("boom");
     startWorker({

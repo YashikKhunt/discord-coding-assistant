@@ -1,3 +1,5 @@
+export * from "./checkout.ts";
+
 import type { RepoRef } from "@dca/core";
 
 export type RepoAccess =

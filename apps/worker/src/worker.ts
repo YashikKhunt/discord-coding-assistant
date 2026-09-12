@@ -145,6 +145,8 @@ export class Worker {
       });
       if (controller.signal.aborted) throw new AbortedError();
 
+      // Runners that fail during setup never call markRunning(); finalizing requires `running`.
+      await transitionJob(db, job.id, "running");
       const finalizing = await transitionJob(db, job.id, "finalizing", {
         iterations: outcome.iterations,
         costUsd: outcome.costUsd,

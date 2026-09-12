@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="1" tests="4" time="0.012" timestamp="2026-09-12T21:49:04.007926+00:00" hostname="1c7a9540b8af"><testcase classname="test_math" name="test_adds" file="test_math.py" line="3" time="0.000" /><testcase classname="test_math" name="test_subtracts_wrongly" file="test_math.py" line="6" time="0.000"><failure message="AssertionError: bad math&#10;assert (5 - 3) == 1">def test_subtracts_wrongly():
+&gt;       assert 5 - 3 == 1, "bad math"
+E       AssertionError: bad math
+E       assert (5 - 3) == 1
+
+test_math.py:8: AssertionError</failure></testcase><testcase classname="test_math" name="test_skipped" file="test_math.py" line="9" time="0.000"><skipped type="pytest.skip" message="later">/w/test_math.py:10: later</skipped></testcase><testcase classname="test_math" name="test_errors" file="test_math.py" line="13" time="0.000"><failure message="RuntimeError: boom">def test_errors():
+&gt;       raise RuntimeError("boom")
+E       RuntimeError: boom
+
+test_math.py:15: RuntimeError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,41 @@
+
+ RUN  v5.0.0 /repo
+
+ ❯ math.vitest.test.mjs (4 tests | 1 failed | 1 skipped) 4ms
+   ❯ math (3)
+     ✓ adds 1ms
+     × subtracts wrongly 2ms
+     ↓ skipped one
+   ✓ top level passes 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  math.vitest.test.mjs > math > subtracts wrongly
+AssertionError: Expected values to be strictly equal:
+
+2 !== 1
+
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ math.vitest.test.mjs:5:42
+      3| describe("math", () => {
+      4|   test("adds", () => assert.strictEqual(1 + 1, 2));
+      5|   test("subtracts wrongly", () => assert.strictEqual(5 - 3, 1));
+       |                                          ^
+      6|   test.skip("skipped one", () => {});
+      7| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed | 1 skipped (4)
+   Start at  23:49:01
+   Duration  111ms (transform 45%, import 29%, tests 17%, worker 9%)
+
+JUNIT report written to /repo/vitest-junit.xml

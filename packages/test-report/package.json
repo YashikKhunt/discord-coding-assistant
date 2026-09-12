@@ -1,0 +1,16 @@
+{
+  "name": "@dca/test-report",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@dca/core": "workspace:*",
+    "fast-xml-parser": "^5.11.1"
+  }
+}

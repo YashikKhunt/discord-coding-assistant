@@ -5,15 +5,22 @@ import {
   forumPostTitle,
   resultContent,
   resultEmbed,
+  resultFiles,
   tagNamesFor,
 } from "@dca/discord-ui";
-import { ChannelType, type Client, type ForumChannel, type ThreadChannel } from "discord.js";
+import {
+  AttachmentBuilder,
+  ChannelType,
+  type Client,
+  type ForumChannel,
+  type ThreadChannel,
+} from "discord.js";
 import type { Logger } from "pino";
 
 /** What the notifier needs from Discord. Implemented with discord.js below; faked in tests. */
 export interface ForumPublisher {
   createPost(job: JobDto): Promise<string>;
-  setTags(threadId: string, job: Pick<JobDto, "type" | "status">): Promise<void>;
+  setTags(threadId: string, job: Pick<JobDto, "type" | "status" | "result">): Promise<void>;
   postResult(threadId: string, job: JobDto): Promise<void>;
 }
 
@@ -62,7 +69,7 @@ export class DiscordForumPublisher implements ForumPublisher {
     return thread.id;
   }
 
-  async setTags(threadId: string, job: Pick<JobDto, "type" | "status">): Promise<void> {
+  async setTags(threadId: string, job: Pick<JobDto, "type" | "status" | "result">): Promise<void> {
     const thread = await this.#thread(threadId);
     await thread.setAppliedTags(this.#tagIdsFor(job));
   }
@@ -72,11 +79,14 @@ export class DiscordForumPublisher implements ForumPublisher {
     await thread.send({
       content: resultContent(job),
       embeds: [resultEmbed(job)],
+      files: resultFiles(job).map(
+        (file) => new AttachmentBuilder(Buffer.from(file.content, "utf8"), { name: file.name }),
+      ),
       allowedMentions: { users: [job.requestedByDiscordId] },
     });
   }
 
-  #tagIdsFor(job: Pick<JobDto, "type" | "status">): string[] {
+  #tagIdsFor(job: Pick<JobDto, "type" | "status" | "result">): string[] {
     return tagNamesFor(job)
       .map((name) => this.#tagIds.get(name))
       .filter((id): id is string => Boolean(id));

@@ -1,0 +1,17 @@
+{
+  "name": "@dca/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "smol-toml": "^1.8.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.2"
+  }
+}

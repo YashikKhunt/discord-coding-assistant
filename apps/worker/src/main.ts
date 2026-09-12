@@ -1,26 +1,64 @@
-import { baseEnv, parseEnv, workerEnv } from "@dca/core";
+import { baseEnv, githubEnv, parseEnv, workerEnv } from "@dca/core";
 import { createDb } from "@dca/db";
 import { runMigrations } from "@dca/db/migrate";
+import { createGitHubClient } from "@dca/github";
+import { DockerSandboxProvider, isDockerAvailable } from "@dca/sandbox";
 import pino from "pino";
 import { StubRunner } from "./runner.ts";
+import { RouterRunner } from "./runners/router.ts";
+import { RuntestRunner } from "./runners/runtest.ts";
 import { Worker } from "./worker.ts";
 
-const env = parseEnv(baseEnv.extend(workerEnv.shape));
+const env = parseEnv(baseEnv.extend(workerEnv.shape).extend(githubEnv.shape));
 const log = pino({ level: env.LOG_LEVEL, base: { service: "worker" } });
+
+if (!(await isDockerAvailable())) {
+  log.fatal("Docker is not available; the worker needs it to run sandboxes");
+  process.exit(1);
+}
 
 await runMigrations(env.DATABASE_URL);
 const { db, close } = createDb(env.DATABASE_URL, { max: env.WORKER_CONCURRENCY + 4 });
+
+const sandbox = new DockerSandboxProvider({
+  runtime: env.SANDBOX_RUNTIME,
+  network: env.SANDBOX_NETWORK || undefined,
+  proxyUrl: env.SANDBOX_PROXY_URL || undefined,
+});
+if (!env.SANDBOX_NETWORK) {
+  log.warn("SANDBOX_NETWORK is empty: sandboxes have no network, dependency installs will fail");
+}
 
 const worker = new Worker({
   db,
   log,
   concurrency: env.WORKER_CONCURRENCY,
-  runner: new StubRunner(),
+  runner: new RouterRunner({
+    runtest: new RuntestRunner({
+      sandbox,
+      github: createGitHubClient(env.GITHUB_BOT_TOKEN),
+      token: env.GITHUB_BOT_TOKEN,
+      workspacesDir: env.WORKSPACES_DIR,
+      images: { node: env.SANDBOX_IMAGE_NODE, python: env.SANDBOX_IMAGE_PYTHON },
+    }),
+    // Replaced by the agent runners in M3/M4.
+    task: new StubRunner(),
+    bugreport: new StubRunner(),
+  }),
 });
+
+// Sandboxes outlive a crashed worker; remove any older than the longest job could run.
+const reaper = setInterval(() => {
+  sandbox
+    .reapOrphans(45 * 60_000)
+    .then((removed) => removed && log.warn({ removed }, "removed orphaned sandboxes"))
+    .catch((err) => log.error({ err }, "sandbox reaper failed"));
+}, 5 * 60_000);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
     log.info({ signal }, "shutting down");
+    clearInterval(reaper);
     await worker.stop();
     await close();
     process.exit(0);

@@ -1,0 +1,28 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /w
+collected 4 items
+
+test_math.py .FsF                                                        [100%]
+
+=================================== FAILURES ===================================
+____________________________ test_subtracts_wrongly ____________________________
+
+    def test_subtracts_wrongly():
+>       assert 5 - 3 == 1, "bad math"
+E       AssertionError: bad math
+E       assert (5 - 3) == 1
+
+test_math.py:8: AssertionError
+_________________________________ test_errors __________________________________
+
+    def test_errors():
+>       raise RuntimeError("boom")
+E       RuntimeError: boom
+
+test_math.py:15: RuntimeError
+------------------- generated xml file: /w/pytest-junit.xml --------------------
+=========================== short test summary info ============================
+FAILED test_math.py::test_subtracts_wrongly - AssertionError: bad math
+FAILED test_math.py::test_errors - RuntimeError: boom
+==================== 2 failed, 1 passed, 1 skipped in 0.01s ====================

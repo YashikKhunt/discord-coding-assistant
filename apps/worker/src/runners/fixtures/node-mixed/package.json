@@ -1,0 +1,7 @@
+{
+  "name": "node-mixed",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

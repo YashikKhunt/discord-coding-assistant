@@ -1,0 +1,7 @@
+# One domain per line. A leading dot also matches subdomains.
+# npm / yarn / corepack
+.npmjs.org
+.yarnpkg.com
+# PyPI
+pypi.org
+files.pythonhosted.org

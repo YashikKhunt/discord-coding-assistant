@@ -19,5 +19,27 @@ services:
       timeout: 3s
       retries: 20
 
+  # The only way out of the sandbox network. Sandboxes are attached to `sandbox`
+  # (internal: no route to the internet) and reach registries through this proxy.
+  egress-proxy:
+    image: ubuntu/squid:6.13-25.04_beta
+    restart: unless-stopped
+    volumes:
+      - ./proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/3128'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - sandbox
+      - egress
+
+networks:
+  sandbox:
+    internal: true
+  egress: {}
+
 volumes:
   pgdata:

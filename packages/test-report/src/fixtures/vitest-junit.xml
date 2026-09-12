@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="4" failures="1" errors="0" time="0.003518958">
+    <testsuite name="math.vitest.test.mjs" timestamp="2026-09-12T21:49:01.314Z" hostname="Mac" tests="4" failures="1" errors="0" skipped="1" time="0.003518958">
+        <testcase classname="math.vitest.test.mjs" name="math &gt; adds" time="0.000647959">
+        </testcase>
+        <testcase classname="math.vitest.test.mjs" name="math &gt; subtracts wrongly" time="0.002271792">
+            <failure message="Expected values to be strictly equal:
+
+2 !== 1
+" type="AssertionError">
+AssertionError: Expected values to be strictly equal:
+
+2 !== 1
+
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ math.vitest.test.mjs:5:42
+            </failure>
+        </testcase>
+        <testcase classname="math.vitest.test.mjs" name="math &gt; skipped one" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="math.vitest.test.mjs" name="top level passes" time="0.000044958">
+        </testcase>
+    </testsuite>
+</testsuites>

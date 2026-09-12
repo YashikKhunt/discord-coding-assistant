@@ -1,4 +1,7 @@
-import type { JobDto, JobStatus, JobType } from "@dca/core";
+import { isRuntestResult, type JobDto, type JobStatus, type JobType } from "@dca/core";
+import { runtestEmbedParts, runtestWord } from "./runtest.ts";
+
+export * from "./runtest.ts";
 
 /** Subset of Discord's APIEmbed; discord.js accepts these plain objects directly. */
 export interface Embed {
@@ -79,7 +82,15 @@ export function statusTag(status: JobStatus): StatusTag {
   }
 }
 
-export function tagNamesFor(job: Pick<JobDto, "type" | "status">): string[] {
+export function tagNamesFor(job: Pick<JobDto, "type" | "status" | "result">): string[] {
+  // A completed /runtest whose tests failed is still a "failed" run from the user's view.
+  if (
+    job.status === "succeeded" &&
+    isRuntestResult(job.result) &&
+    job.result.outcome !== "passed"
+  ) {
+    return [TYPE_TAGS[job.type], "failed"];
+  }
   return [TYPE_TAGS[job.type], statusTag(job.status)];
 }
 
@@ -173,6 +184,17 @@ const RESULT_HEADLINE: Partial<Record<JobStatus, string>> = {
 };
 
 export function resultEmbed(job: JobDto): Embed {
+  if (isRuntestResult(job.result)) {
+    const parts = runtestEmbedParts(job, job.result);
+    return {
+      title: parts.title,
+      description: parts.description,
+      color: parts.color,
+      fields: parts.fields,
+      footer: { text: parts.footer },
+      timestamp: job.finishedAt ?? undefined,
+    };
+  }
   const summary =
     typeof job.result?.summary === "string" ? job.result.summary : (job.error ?? undefined);
   const headline = job.prUrl
@@ -188,8 +210,27 @@ export function resultEmbed(job: JobDto): Embed {
   };
 }
 
-export function resultContent(job: Pick<JobDto, "requestedByDiscordId" | "shortId" | "status">) {
-  return `<@${job.requestedByDiscordId}> ${job.shortId} ${RESULT_HEADLINE[job.status] ?? job.status}`;
+export function resultContent(
+  job: Pick<JobDto, "requestedByDiscordId" | "shortId" | "status" | "result">,
+) {
+  const word =
+    isRuntestResult(job.result) && job.status !== "cancelled"
+      ? runtestWord(job.result)
+      : (RESULT_HEADLINE[job.status] ?? job.status);
+  return `<@${job.requestedByDiscordId}> ${job.shortId} ${word}`;
+}
+
+export interface ResultFile {
+  name: string;
+  content: string;
+}
+
+/** Files attached to the result message (e.g. the tail of the test log). */
+export function resultFiles(job: Pick<JobDto, "shortId" | "result">): ResultFile[] {
+  if (isRuntestResult(job.result) && job.result.logTail) {
+    return [{ name: `${job.shortId}-log.txt`, content: job.result.logTail }];
+  }
+  return [];
 }
 
 export function statusEmbed(

@@ -1,0 +1,26 @@
+FAIL ./math.test.js
+  ● math › subtracts wrongly
+
+    assert.strictEqual(received, expected)
+
+    Expected value to strictly be equal to:
+      1
+    Received:
+      2
+
+      3 | describe("math", () => {
+      4 |   test("adds", () => assert.strictEqual(1 + 1, 2));
+    > 5 |   test("subtracts wrongly", () => assert.strictEqual(5 - 3, 1));
+        |                                          ^
+      6 |   test.skip("skipped one", () => {});
+      7 | });
+      8 | test("top level passes", () => {});
+
+      at Object.strictEqual (math.test.js:5:42)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 skipped, 2 passed, 4 total
+Snapshots:   0 total
+Time:        0.143 s
+Ran all test suites.
+Test results written to: jest.json

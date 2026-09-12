@@ -29,7 +29,7 @@ class FakePublisher implements ForumPublisher {
     this.calls.push(`post:${job.shortId}`);
     return `thread-${this.#nextThread++}`;
   }
-  async setTags(threadId: string, job: Pick<JobDto, "type" | "status">) {
+  async setTags(threadId: string, job: Pick<JobDto, "type" | "status" | "result">) {
     this.calls.push(`tags:${threadId}:${job.status}`);
   }
   async postResult(threadId: string, job: JobDto) {

@@ -274,6 +274,7 @@ Implementations: `DockerSandboxProvider` (v1, local + VPS). Later: `E2BSandboxPr
 | Control | Local (Docker Desktop) | VPS |
 |---|---|---|
 | Runtime | runc | **gVisor (`runsc`)** |
+| Volume setup | throwaway root container runs only `chown` on the new workspace volume | same |
 | User | non-root uid 1000 | same |
 | Capabilities | `--cap-drop=ALL`, `no-new-privileges` | same |
 | Filesystem | read-only root, tmpfs `/tmp`, writable `/workspace` only | same |
@@ -283,7 +284,7 @@ Implementations: `DockerSandboxProvider` (v1, local + VPS). Later: `E2BSandboxPr
 | Secrets | none; env from `.env.example` | same |
 
 ### Egress allowlist
-Default: `registry.npmjs.org`, `registry.yarnpkg.com`, `pypi.org`, `files.pythonhosted.org`. Per repo additions via `.agent.yml → network.extraHosts`. LLM and GitHub traffic originate from the **worker**, never the sandbox.
+Squid proxy (`infra/proxy`) on an `internal: true` Docker network. Default allowlist: `.npmjs.org`, `.yarnpkg.com`, `pypi.org`, `files.pythonhosted.org` (`infra/proxy/allowlist.txt`). Per-repo `.agent.yml → network.extraHosts` is parsed but not applied in v1 (it would widen egress for every concurrent job). LLM and GitHub traffic originate from the **worker**, never the sandbox.
 
 ### Repo detection (when no `.agent.yml`)
 

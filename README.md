@@ -17,8 +17,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 |---|---|---|
 | M0 | Monorepo scaffold, config, DB schema, CI | ✅ |
 | M1 | Discord bot + API + queue, stub worker | ✅ |
-| M2 | Docker sandbox, repo detection, deterministic `/runtest` | ⏳ |
-| M3 | LLM layer + agent loop + budgets | — |
+| M2 | Docker sandbox, repo detection, deterministic `/runtest` | ✅ |
+| M3 | LLM layer + agent loop + budgets | ⏳ |
 | M4 | GitHub finalize: patches, guardrails, PRs | — |
 | M5 | Dashboard | — |
 | M6 | VPS deployment | — |
@@ -30,7 +30,8 @@ Requirements: Node 22+, pnpm, Docker.
 ```bash
 pnpm install
 cp .env.example .env    # fill in values, see docs/SETUP-DISCORD.md
-pnpm infra:up           # Postgres on localhost:5432 (databases: dca, dca_test)
+pnpm infra:up           # Postgres (dca, dca_test) + egress proxy for sandboxes
+pnpm sandbox:build      # sandbox images: dca-sandbox-node, dca-sandbox-python
 pnpm db:migrate
 pnpm bot:register       # once, and whenever commands change
 pnpm dev                # api + worker + bot with reload
@@ -41,13 +42,14 @@ pnpm dev                # api + worker + bot with reload
 | `pnpm dev` / `dev:api` / `dev:worker` / `dev:bot` | Run services with reload |
 | `pnpm lint` / `pnpm format` | Biome check / fix |
 | `pnpm typecheck` | TypeScript across all packages |
-| `pnpm test` | Vitest; integration tests run when `TEST_DATABASE_URL` is set |
+| `pnpm test` | Vitest; DB tests need `TEST_DATABASE_URL`, Docker sandbox tests need `SANDBOX_TESTS=1` |
+| `pnpm sandbox:build` | Build the sandbox images |
 | `pnpm db:generate` | Generate a Drizzle migration after editing `packages/db/src/schema.ts` |
 
 Run the integration tests locally against the throwaway test database:
 
 ```bash
-TEST_DATABASE_URL=postgres://dca:dca@localhost:5432/dca_test pnpm test
+TEST_DATABASE_URL=postgres://dca:dca@localhost:5432/dca_test SANDBOX_TESTS=1 pnpm test
 ```
 
 ## How a job flows
@@ -58,19 +60,41 @@ TEST_DATABASE_URL=postgres://dca:dca@localhost:5432/dca_test pnpm test
 4. **worker** claims the job (`FOR UPDATE SKIP LOCKED`), runs it, and records every state change as a `job_events` row.
 5. **bot**'s notifier delivers those events to Discord: forum tags follow the status, and the final result is posted with an @mention.
 
+## `/runtest`
+
+Runs the repository's existing test suite in a disposable sandbox; no LLM is involved.
+
+1. Shallow-fetch the ref (`branch`, tag, SHA, or `#12` for a pull request) with the bot token. The token is passed through environment variables and never written to `.git/config`.
+2. Detect the stack and commands (`pnpm`/`yarn`/`npm`, `vitest`/`jest`/`node --test`, `uv`/`pip`, `pytest`/`unittest`), or read them from `.agent.yml`.
+3. Copy the checkout into a sandbox container: uid 1000, no capabilities, read-only root, CPU/memory/pid limits, and a network whose only exit is a proxy that allows npm and PyPI.
+4. Install, run tests with a machine-readable reporter (JUnit or jest JSON), fall back to parsing console output.
+5. Post a result embed with counts, the first failures, and the log tail attached.
+
+Optional `.agent.yml` in the target repo:
+
+```yaml
+image: node            # node | python
+install: pnpm install --frozen-lockfile
+test: pnpm vitest run --reporter=junit --outputFile=build/junit.xml
+testReport: build/junit.xml   # JUnit XML, or a jest --json file ending in .json
+envFile: .env.example         # copied to .env when .env is missing
+```
+
 ## Layout
 
 ```
 apps/
   api/         Fastify: create/list/get/cancel jobs, repo checks, spend cap, attachments
   bot/         discord.js: slash commands, allowlist, forum publisher, notifier (outbox)
-  worker/      claims jobs, heartbeats, reaps lost jobs, runs the job runner (stub in M1)
+  worker/      claims jobs, heartbeats, reaps lost jobs; /runtest runner (task/bugreport stubbed)
 packages/
   core/        env config, API contracts, job types/IDs, state machine
   db/          Drizzle schema, migrations, queue + job queries
   discord-ui/  embed and message builders
-  github/      GitHub REST client (repo access check)
+  github/      GitHub REST client, token-safe git checkout
   profiles/    per-command limits and models
-infra/         docker compose (Postgres)
+  sandbox/     Docker sandbox provider, repo detection, .agent.yml
+  test-report/ JUnit / jest JSON / console output parsers
+infra/         docker compose (Postgres, egress proxy), sandbox images
 docs/          architecture, Discord setup
 ```

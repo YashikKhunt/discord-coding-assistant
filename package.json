@@ -19,7 +19,8 @@
     "db:generate": "pnpm --filter @dca/db generate",
     "db:migrate": "pnpm --filter @dca/db migrate",
     "infra:up": "docker compose -f infra/compose.yml up -d",
-    "infra:down": "docker compose -f infra/compose.yml down"
+    "infra:down": "docker compose -f infra/compose.yml down",
+    "sandbox:build": "docker build -t dca-sandbox-node:latest infra/images/sandbox-node && docker build -t dca-sandbox-python:latest infra/images/sandbox-python"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
