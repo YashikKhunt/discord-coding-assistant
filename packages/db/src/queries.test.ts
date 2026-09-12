@@ -3,10 +3,10 @@ import { eq, like } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "./client.ts";
 import { runMigrations } from "./migrate.ts";
-import { createJob, transitionJob } from "./queries.ts";
+import { claimNextJob, createJob, transitionJob } from "./queries.ts";
 import { jobEvents, jobs } from "./schema.ts";
 
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!DATABASE_URL)("db queries (integration)", () => {
   let handle: DbHandle;
@@ -59,6 +59,22 @@ describe.skipIf(!DATABASE_URL)("db queries (integration)", () => {
       "status.preparing",
       "status.cancelled",
     ]);
+  });
+
+  it("claims each queued job exactly once across concurrent workers", async () => {
+    await handle.db.update(jobs).set({ status: "cancelled" }).where(eq(jobs.status, "queued"));
+    const created = await Promise.all(Array.from({ length: 12 }, newJob));
+    const claims = await Promise.all(
+      Array.from({ length: 20 }, (_, i) => claimNextJob(handle.db, `worker-${i}`)),
+    );
+    const claimedIds = claims.filter((job) => job !== null).map((job) => job.id);
+    expect(claimedIds.sort()).toEqual(created.map((job) => job.id).sort());
+
+    const preparing = await handle.db.select().from(jobs).where(like(jobs.repo, repo));
+    const orphaned = preparing.filter(
+      (job) => job.status === "preparing" && !claimedIds.includes(job.id),
+    );
+    expect(orphaned).toEqual([]);
   });
 
   it("allows only one of two racing transitions to win", async () => {

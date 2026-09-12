@@ -1,0 +1,22 @@
+{
+  "name": "@dca/bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "start": "tsx src/main.ts",
+    "register": "tsx --env-file-if-exists=../../.env src/register-commands.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@dca/core": "workspace:*",
+    "@dca/db": "workspace:*",
+    "@dca/discord-ui": "workspace:*",
+    "discord.js": "^14.27.0",
+    "pino": "^10.3.1"
+  },
+  "devDependencies": {
+    "drizzle-orm": "^0.45.2"
+  }
+}

@@ -26,7 +26,7 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      DATABASE_URL: postgres://dca:dca@localhost:5432/dca
+      TEST_DATABASE_URL: postgres://dca:dca@localhost:5432/dca
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

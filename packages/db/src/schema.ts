@@ -59,10 +59,12 @@ export const jobs = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+    workerId: text("worker_id"),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
-    index("jobs_status_idx").on(t.status),
+    index("jobs_status_created_at_idx").on(t.status, t.createdAt),
     index("jobs_created_at_idx").on(t.createdAt),
     index("jobs_repo_idx").on(t.repo),
   ],

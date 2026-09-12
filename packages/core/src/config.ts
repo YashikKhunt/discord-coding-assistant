@@ -18,6 +18,17 @@ export const baseEnv = z.object({
   DATABASE_URL: z.url(),
 });
 
+export const apiEnv = z.object({
+  API_PORT: z.coerce.number().int().default(4000),
+  API_HOST: z.string().default("127.0.0.1"),
+  INTERNAL_API_TOKEN: z.string().min(24),
+});
+
+export const apiClientEnv = z.object({
+  API_URL: z.url().default("http://127.0.0.1:4000"),
+  INTERNAL_API_TOKEN: z.string().min(24),
+});
+
 export const discordEnv = z.object({
   DISCORD_TOKEN: z.string().min(1),
   DISCORD_APP_ID: snowflake,

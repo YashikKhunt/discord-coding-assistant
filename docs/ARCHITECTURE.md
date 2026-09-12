@@ -46,6 +46,7 @@ A self-hosted, autonomous coding agent driven from Discord. Users issue slash co
 | E17 | Network | Sandbox egress limited to package registries. |
 | E18 | Secrets | No real secrets in sandbox; env built from `.env.example`. |
 | J3 | Repo config | Optional `.agent.yml`, auto-detect otherwise. |
+| — | Queue | `jobs` table is the queue (`SELECT … FOR UPDATE SKIP LOCKED`); replaces pg-boss so enqueue is atomic with job creation. |
 | J4 | Concurrency | Same repo may run multiple jobs, separate branches. Global worker concurrency = 2. |
 | G1–G5 | Discord UX | `#create-job` (public ack with job ID) → `#responses` **forum** post per job with tags. Final result only. @mention on completion/failure. |
 | J2 | Discord transport | Gateway websocket via discord.js (no public URL needed). |
@@ -73,8 +74,8 @@ A self-hosted, autonomous coding agent driven from Discord. Users issue slash co
 │                             │             └──────────────────────────────────┘  │
 │                             ▼                                                   │
 │                  ┌──────────────────────┐                                        │
-│                  │ Postgres             │ jobs · job_events · llm_calls ·         │
-│                  │  + pg-boss (queue)   │ tool_calls · attachments                │
+│                  │ Postgres             │ jobs (also the queue) · job_events ·    │
+│                  │                      │ llm_calls · tool_calls · attachments    │
 │                  └──────────┬───────────┘                                        │
 │                             ▼                                                   │
 │                  ┌──────────────────────┐   LLM API ──► Anthropic / OpenAI / OpenRouter
@@ -97,11 +98,11 @@ A self-hosted, autonomous coding agent driven from Discord. Users issue slash co
 |---|---|---|
 | **bot** | Registers slash commands, checks allowlist, calls api, replies with job ID within 3s. Runs the **notifier** loop that turns `job_events` into forum posts, tag updates, and mentions. | Discord gateway + REST, api |
 | **api** | Single write path for jobs. Validates repo access, stores attachments, enqueues, handles cancel. Serves dashboard data + Discord OAuth. Enforces monthly spend cap. | Postgres, GitHub API (repo validation) |
-| **worker** | Pulls jobs from pg-boss. Prepares workspace + sandbox, runs agent loop, finalizes (patch, guardrails, push, PR, status). Writes all events/costs. | Postgres, LLM providers, GitHub, SandboxProvider |
+| **worker** | Claims `queued` jobs from the `jobs` table (`FOR UPDATE SKIP LOCKED`), heartbeats them, and reaps jobs of lost workers. Prepares workspace + sandbox, runs agent loop, finalizes (patch, guardrails, push, PR, status). Writes all events/costs. | Postgres, LLM providers, GitHub, SandboxProvider |
 | **sandbox** | Ephemeral container per job. Repo checkout without `.git` credentials. Runs install/tests/agent commands. | egress proxy only |
 | **egress proxy** | Allows only registry hosts (+ per-repo extras from `.agent.yml`). | Internet |
 | **dashboard** | Read jobs/events/costs; trigger + cancel jobs through api. | api |
-| **Postgres** | System of record + queue (pg-boss). | — |
+| **Postgres** | System of record; the `jobs` table doubles as the queue. | — |
 
 Why the bot owns notifications (not the worker): workers stay Discord-agnostic, and Discord outages/rate limits never fail a job — events are retried from the table (outbox pattern).
 
@@ -114,7 +115,7 @@ sequenceDiagram
     actor U as User
     participant B as bot
     participant A as api
-    participant DB as Postgres/pg-boss
+    participant DB as Postgres
     participant W as worker
     participant S as sandbox
     participant G as GitHub
@@ -123,11 +124,11 @@ sequenceDiagram
     U->>B: /task repo:owner/app description:"add rate limiting"
     B->>A: POST /jobs (allowlist ok)
     A->>G: GET /repos/owner/app (PAT can access?)
-    A->>DB: insert job TASK-0042 (queued) + enqueue
+    A->>DB: insert job TASK-0042 (queued = enqueued)
     A-->>B: job id
     B-->>U: ✅ TASK-0042 queued → link
     B->>F: create forum post "TASK-0042 · owner/app" tags[task, queued]
-    W->>DB: fetch job
+    W->>DB: claim job (SKIP LOCKED)
     W->>G: clone (host side)
     W->>S: create sandbox, copy repo (no .git creds), install deps
     loop agent loop (≤ maxIterations, ≤ maxMinutes, ≤ maxUsd)
@@ -172,7 +173,7 @@ stateDiagram-v2
 
 - Every transition inserts a `job_events` row; the notifier only reacts to terminal events (final-result-only UX) plus forum-post creation on `queued`.
 - `/cancel` sets `cancel_requested_at`; the loop checks it between steps and the worker kills the sandbox.
-- Worker crash: pg-boss job expires → job marked `failed` with reason `worker_lost` (no automatic retry for jobs that may have pushed code).
+- Worker crash: heartbeats stop → reaper marks the job `failed` with reason `worker_lost` (no automatic retry for jobs that may have pushed code).
 
 ---
 
@@ -413,11 +414,11 @@ attachments     id · job_id fk · kind(image,log,other) · filename · mime · 
 job_counters    type pk · last_value int
 dashboard_sessions  id · discord_user_id · expires_at
 ```
-Plus `pgboss.*` schema managed by pg-boss.
+`jobs` also carries `worker_id` and `heartbeat_at` for queue claims and lost-worker detection.
 
 **Spend cap:** api rejects a new job if `sum(llm_calls.cost_usd this month) + profile.maxUsd > MONTHLY_LLM_CAP_USD`. Worker re-checks before each LLM call.
 
-**Retention:** nightly pg-boss cron deletes jobs (cascade) and attachment files older than 30 days.
+**Retention:** a nightly worker task deletes jobs (cascade) and attachment files older than 30 days.
 
 ---
 
@@ -441,7 +442,7 @@ discord-coding-assistant/
 ├─ apps/
 │  ├─ bot/          discord.js gateway, commands, notifier
 │  ├─ api/          Fastify: jobs, attachments, auth, dashboard API
-│  ├─ worker/       pg-boss consumer: prepare → agent → finalize
+│  ├─ worker/       job claimer: prepare → agent → finalize
 │  └─ dashboard/    Next.js
 ├─ packages/
 │  ├─ core/         job types, state machine, config (zod-validated env)
@@ -520,7 +521,7 @@ ATTACHMENTS_DIR=/data/attachments   RETENTION_DAYS=30
 | M | Scope | Done when |
 |---|---|---|
 | **M0** | Monorepo scaffold, config, Drizzle schema, compose (Postgres) | `pnpm test` + migrations run |
-| **M1** | bot + api + pg-boss; all 6 commands create/read/cancel jobs; forum post + tags; stub worker that completes jobs | Full Discord round-trip with fake results |
+| **M1** | bot + api + Postgres queue; all 6 commands create/read/cancel jobs; forum post + tags; stub worker that completes jobs | Full Discord round-trip with fake results |
 | **M2** | DockerSandboxProvider, images, egress proxy, repo detection, `.agent.yml` | `/runtest` runs a real suite and posts a deterministic embed (no LLM) |
 | **M3** | LLM package (3 providers, fallback, pricing), agent loop, tools, budgets, `llm_calls`/`tool_calls` recording, spend cap | `/runtest` with "likely cause" analysis within $0.30 |
 | **M4** | GitHub finalize: patch export, guardrails, push, PR, draft-on-partial, commit status + PR comment | `/bugreport` and `/task` open PRs on a test repo |
