@@ -320,10 +320,11 @@ instructions: |
 
 ### Finalize (worker, host side)
 
-1. `sandbox.exportPatch()` → unified diff against base commit.
+1. Export `git diff --binary` inside the sandbox against a **baseline commit taken after dependency install**, so setup artefacts (e.g. a generated lockfile) are not part of the PR.
 2. Guardrails on the patch:
    - reject changes under `.github/workflows/`, `.agent.yml`
-   - secret scan (gitleaks) on added lines
+   - secret scan on added lines (built-in patterns for private keys, GitHub/Anthropic/OpenAI/AWS/Slack/Google/Discord tokens)
+   - no `.env` files, symlinks, submodules, `.git/` or `..` paths
    - size cap (files / lines changed)
    - empty diff → no PR, report "no changes"
 3. Fresh clone on host → `git -c core.hooksPath=/dev/null apply` → commit as bot → push `agent/<JOB-ID>-<slug>`.

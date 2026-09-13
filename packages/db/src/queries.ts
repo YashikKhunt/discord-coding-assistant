@@ -2,6 +2,8 @@ import { formatShortId, type JobDto, type JobStatus, type JobType, sourcesFor } 
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql, sum } from "drizzle-orm";
 import type { Db } from "./client.ts";
 import {
+  type Attachment,
+  attachments,
   type Job,
   type JobEvent,
   jobCounters,
@@ -338,4 +340,12 @@ export interface ToolCallInput {
 
 export async function recordToolCall(db: Db, input: ToolCallInput): Promise<void> {
   await db.insert(toolCalls).values({ ...input, args: input.args ?? {} });
+}
+
+export async function listAttachments(db: Db, jobId: string): Promise<Attachment[]> {
+  return db
+    .select()
+    .from(attachments)
+    .where(eq(attachments.jobId, jobId))
+    .orderBy(asc(attachments.createdAt));
 }

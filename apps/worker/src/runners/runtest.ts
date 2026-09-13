@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { parseRepo, type RuntestResult } from "@dca/core";
+import { isRuntestResult, parseRepo, type RepoRef, type RuntestResult } from "@dca/core";
 import type { Job } from "@dca/db";
 import {
   CheckoutError,
@@ -48,7 +48,7 @@ export interface RuntestRunnerOptions {
 const LOG_TAIL_BYTES = 24_000;
 const MAX_CONFIG_FILE_BYTES = 1_000_000;
 
-function hostRepoFiles(dir: string): RepoFiles {
+export function hostRepoFiles(dir: string): RepoFiles {
   const resolve = (file: string) => {
     const full = path.resolve(dir, file);
     return full.startsWith(`${path.resolve(dir)}${path.sep}`) ? full : null;
@@ -67,6 +67,45 @@ function hostRepoFiles(dir: string): RepoFiles {
         : null;
     },
   };
+}
+
+interface PullRequestTarget {
+  repo: RepoRef | null;
+  prNumber: number | null;
+}
+
+export const RUNTEST_COMMENT_MARKER = "<!-- discord-coding-assistant:runtest -->";
+
+/** Markdown for the PR comment, mirroring the Discord embed. */
+export function runtestComment(job: Pick<Job, "shortId">, result: RuntestResult): string {
+  const icon = { passed: "✅", failed: "❌", error: "⚠️" }[result.outcome];
+  const heading = { passed: "Tests passed", failed: "Tests failed", error: "Tests could not run" }[
+    result.outcome
+  ];
+  const lines = [
+    `### ${icon} ${heading} · ${result.summary}`,
+    "",
+    `Commit \`${result.commit?.slice(0, 7) ?? "unknown"}\` · \`${result.testCommand ?? "no test command"}\``,
+  ];
+  const failures = result.tests?.failures.slice(0, 10) ?? [];
+  if (failures.length) {
+    lines.push("", "<details><summary>Failing tests</summary>", "");
+    for (const failure of failures) {
+      const message = failure.message.split("\n").slice(0, 6).join("\n").replaceAll("```", "ʼʼʼ");
+      lines.push(`**${failure.name}**`, "```", message, "```");
+    }
+    lines.push("</details>");
+  }
+  if (result.analysis) {
+    lines.push(
+      "",
+      `**Likely cause** (${result.analysis.confidence} confidence): ${result.analysis.likelyCause}`,
+    );
+    if (result.analysis.suggestedFix)
+      lines.push(`**Suggested fix:** ${result.analysis.suggestedFix}`);
+  }
+  lines.push("", `<sub>${job.shortId} · updated on each /runtest for this PR</sub>`);
+  return lines.join("\n");
 }
 
 export function summarizeTests(tests: TestSummary | null, exitCode: number | null): string {
@@ -90,6 +129,15 @@ export class RuntestRunner implements JobRunner {
   }
 
   async run(job: Job, ctx: RunContext): Promise<RunOutcome> {
+    const target: PullRequestTarget = { repo: null, prNumber: null };
+    const outcome = await this.#execute(job, ctx, target);
+    if (target.repo && target.prNumber && isRuntestResult(outcome.result)) {
+      await this.#reportToPullRequest(job, target.repo, target.prNumber, outcome.result, ctx);
+    }
+    return outcome;
+  }
+
+  async #execute(job: Job, ctx: RunContext, target: PullRequestTarget): Promise<RunOutcome> {
     const started = Date.now();
     const deadline = started + getProfile("runtest").limits.maxMinutes * 60_000;
     const log = new HeadTailBuffer(LOG_TAIL_BYTES);
@@ -130,6 +178,10 @@ export class RuntestRunner implements JobRunner {
       if (!access.ok) return fail(`Repository is no longer accessible (${access.reason})`);
       const ref = resolveRef(job.ref, access.defaultBranch);
       result.ref = job.ref?.trim() || access.defaultBranch;
+      if (ref.kind === "pr") {
+        target.repo = repo;
+        target.prNumber = ref.number;
+      }
 
       await rm(workdir, { recursive: true, force: true });
       await mkdir(path.dirname(workdir), { recursive: true });
@@ -230,6 +282,37 @@ export class RuntestRunner implements JobRunner {
     } finally {
       await sandbox?.destroy().catch((err) => ctx.log.warn({ err }, "sandbox destroy failed"));
       await rm(workdir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  async #reportToPullRequest(
+    job: Job,
+    repo: RepoRef,
+    prNumber: number,
+    result: RuntestResult,
+    ctx: RunContext,
+  ): Promise<void> {
+    const { github } = this.#opts;
+    try {
+      if (result.commit) {
+        await github.createCommitStatus(repo, result.commit, {
+          state: { passed: "success", failed: "failure", error: "error" }[result.outcome] as
+            | "success"
+            | "failure"
+            | "error",
+          context: "agent/runtest",
+          description: `${job.shortId}: ${result.summary}`,
+        });
+      }
+      await github.upsertIssueComment(
+        repo,
+        prNumber,
+        RUNTEST_COMMENT_MARKER,
+        runtestComment(job, result),
+      );
+    } catch (err) {
+      ctx.log.warn({ err }, "could not report test results to the pull request");
+      result.notes.push("Could not post the result to the pull request.");
     }
   }
 

@@ -1,6 +1,14 @@
-import { isRuntestResult, type JobDto, type JobStatus, type JobType } from "@dca/core";
+import {
+  isAgentJobResult,
+  isRuntestResult,
+  type JobDto,
+  type JobStatus,
+  type JobType,
+} from "@dca/core";
+import { agentJobEmbedParts, agentJobHeadline } from "./agent-job.ts";
 import { runtestEmbedParts, runtestWord } from "./runtest.ts";
 
+export * from "./agent-job.ts";
 export * from "./runtest.ts";
 
 /** Subset of Discord's APIEmbed; discord.js accepts these plain objects directly. */
@@ -165,11 +173,15 @@ function durationMs(job: Pick<JobDto, "startedAt" | "finishedAt">): number | nul
   return new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime();
 }
 
+function shortModel(model: string | null): string | null {
+  return model ? (model.split(":").pop() ?? model) : null;
+}
+
 function statsFooter(job: JobDto): string {
   const parts = [
     job.result?.model ? String(job.result.model) : null,
     formatUsd(job.costUsd),
-    job.iterations ? `${job.iterations} iterations` : null,
+    job.iterations ? `${job.iterations} steps` : null,
   ];
   const ms = durationMs(job);
   if (ms !== null) parts.push(formatDuration(ms));
@@ -184,6 +196,19 @@ const RESULT_HEADLINE: Partial<Record<JobStatus, string>> = {
 };
 
 export function resultEmbed(job: JobDto): Embed {
+  if (isAgentJobResult(job.result)) {
+    const parts = agentJobEmbedParts(job, job.result);
+    return {
+      ...parts,
+      footer: {
+        text: statsFooter({
+          ...job,
+          result: { ...job.result, model: shortModel(job.result.model) },
+        }),
+      },
+      timestamp: job.finishedAt ?? undefined,
+    };
+  }
   if (isRuntestResult(job.result)) {
     const parts = runtestEmbedParts(job, job.result);
     return {
@@ -216,7 +241,9 @@ export function resultContent(
   const word =
     isRuntestResult(job.result) && job.status !== "cancelled"
       ? runtestWord(job.result)
-      : (RESULT_HEADLINE[job.status] ?? job.status);
+      : isAgentJobResult(job.result) && job.status !== "cancelled"
+        ? agentJobHeadline(job, job.result)
+        : (RESULT_HEADLINE[job.status] ?? job.status);
   return `<@${job.requestedByDiscordId}> ${job.shortId} ${word}`;
 }
 

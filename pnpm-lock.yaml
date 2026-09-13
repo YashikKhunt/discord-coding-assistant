@@ -258,6 +258,9 @@ importers:
       '@dca/test-report':
         specifier: workspace:*
         version: link:../../packages/test-report
+      ai:
+        specifier: ^7.0.99
+        version: 7.0.99(zod@4.6.2)
       pino:
         specifier: ^10.3.1
         version: 10.3.1

@@ -1,4 +1,4 @@
-import type { JobDto } from "@dca/core";
+import type { AgentJobResult, JobDto } from "@dca/core";
 import { describe, expect, it } from "vitest";
 import {
   ackContent,
@@ -85,7 +85,7 @@ describe("messages", () => {
     );
     expect(embed.title).toBe("🟩 TASK-0042 · PR opened · https://github.com/yashik/my-api/pull/18");
     expect(embed.description).toBe("Stub run");
-    expect(embed.footer?.text).toBe("stub · $0.84 · 14 iterations · 6m");
+    expect(embed.footer?.text).toBe("stub · $0.84 · 14 steps · 6m");
   });
 
   it("lists jobs", () => {
@@ -199,5 +199,83 @@ describe("runtest results", () => {
     expect(embed.description).toContain("Dependency install failed with exit code 1");
     expect(embed.description).toContain("npm ERR! missing script");
     expect(resultContent(runtest("error"))).toContain("could not run tests");
+  });
+});
+
+describe("task and bugreport results", () => {
+  const agentJob = (overrides: Partial<AgentJobResult> = {}, jobOverrides: Partial<JobDto> = {}) =>
+    job({
+      type: "bugreport",
+      shortId: "BUG-0017",
+      status: "succeeded",
+      costUsd: 0.84,
+      iterations: 14,
+      startedAt: "2026-09-12T10:00:00.000Z",
+      finishedAt: "2026-09-12T10:06:00.000Z",
+      prUrl: "https://github.com/yashik/my-api/pull/18",
+      result: {
+        kind: "bugreport",
+        outcome: "pr_opened",
+        title: "Fix expired token returning 500",
+        summary: "verifyToken threw on expired JWTs; it now returns null.",
+        base: "main",
+        commit: "abc",
+        branch: "agent/bug-0017-fix-expired-token",
+        prNumber: 18,
+        prUrl: "https://github.com/yashik/my-api/pull/18",
+        filesChanged: 2,
+        insertions: 30,
+        deletions: 4,
+        tests: { command: "npm test", passed: true, summary: "44 passed · 0 failed" },
+        reproduced: true,
+        stopReason: "finished",
+        violations: [],
+        notes: [],
+        model: "anthropic:claude-sonnet-5",
+        ...overrides,
+      },
+      ...jobOverrides,
+    });
+
+  it("renders an opened PR with checks and stats", () => {
+    const embed = resultEmbed(agentJob());
+    expect(embed.title).toBe("🟩 BUG-0017 · PR #18 ready for review");
+    expect(embed.url).toBe("https://github.com/yashik/my-api/pull/18");
+    expect(embed.description).toContain("**Fix expired token returning 500**");
+    expect(embed.fields?.map((f) => `${f.name}=${f.value}`)).toEqual([
+      "Files changed=2 (+30 −4)",
+      "Tests=✅ 44 passed · 0 failed",
+      "Reproduced=yes",
+      "Branch=`agent/bug-0017-fix-expired-token`",
+    ]);
+    expect(embed.footer?.text).toBe("claude-sonnet-5 · $0.84 · 14 steps · 6m");
+    expect(resultContent(agentJob())).toBe(
+      "<@111111111111111111> BUG-0017 PR #18 ready for review",
+    );
+  });
+
+  it("renders partial drafts, blocked patches and no-op runs", () => {
+    const partial = agentJob(
+      { outcome: "draft_pr", notes: ["The agent reached its step limit before finishing."] },
+      { status: "partial" },
+    );
+    expect(resultEmbed(partial).title).toBe("🟨 BUG-0017 · draft PR #18 · stopped early");
+    expect(resultEmbed(partial).description).toContain("_The agent reached its step limit");
+    expect(tagNamesFor(partial)).toEqual(["bugreport", "partial"]);
+
+    const rejected = agentJob(
+      {
+        outcome: "rejected",
+        prNumber: null,
+        prUrl: null,
+        violations: [".github/workflows/ci.yml: modifies CI workflows"],
+      },
+      { status: "failed", prUrl: null },
+    );
+    expect(resultEmbed(rejected).title).toBe("🟥 BUG-0017 · changes blocked by safety checks");
+    expect(resultEmbed(rejected).description).toContain("• .github/workflows/ci.yml");
+
+    const noop = agentJob({ outcome: "no_changes", prNumber: null, prUrl: null, filesChanged: 0 });
+    expect(resultEmbed(noop).title).toBe("⬜ BUG-0017 · no changes made");
   });
 });

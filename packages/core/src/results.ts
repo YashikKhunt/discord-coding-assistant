@@ -52,3 +52,36 @@ export function isRuntestResult(value: unknown): value is RuntestResult {
     typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "runtest"
   );
 }
+
+export interface AgentJobResult {
+  [key: string]: unknown;
+  kind: "task" | "bugreport";
+  /**
+   * `pr_opened`: ready for review; `draft_pr`: opened as draft (tests not passing, no tests, or
+   * the run stopped early); `no_changes`: nothing to push; `rejected`: guardrails blocked the patch.
+   */
+  outcome: "pr_opened" | "draft_pr" | "no_changes" | "rejected" | "error";
+  title: string;
+  summary: string;
+  base: string;
+  commit: string | null;
+  branch: string | null;
+  prNumber: number | null;
+  prUrl: string | null;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  tests: { command: string | null; passed: boolean | null; summary: string };
+  /** bugreport only: whether the agent reproduced the bug before fixing it. */
+  reproduced: boolean | null;
+  /** Why the agent stopped: finished, max_iterations, timeout, budget, ... */
+  stopReason: string;
+  violations: string[];
+  notes: string[];
+  model: string | null;
+}
+
+export function isAgentJobResult(value: unknown): value is AgentJobResult {
+  const kind = (value as { kind?: unknown } | null)?.kind;
+  return kind === "task" || kind === "bugreport";
+}

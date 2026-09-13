@@ -1,12 +1,12 @@
 import { baseEnv, githubEnv, llmEnv, parseEnv, workerEnv } from "@dca/core";
-import { createDb } from "@dca/db";
+import { createDb, listAttachments } from "@dca/db";
 import { runMigrations } from "@dca/db/migrate";
 import { createGitHubClient } from "@dca/github";
 import { availableProviders } from "@dca/llm";
 import { DockerSandboxProvider, isDockerAvailable } from "@dca/sandbox";
 import pino from "pino";
 import { createAgentRuntime } from "./agent-runtime.ts";
-import { StubRunner } from "./runner.ts";
+import { AgentJobRunner } from "./runners/agent-job.ts";
 import { RouterRunner } from "./runners/router.ts";
 import { RuntestRunner } from "./runners/runtest.ts";
 import { Worker } from "./worker.ts";
@@ -39,6 +39,20 @@ if (providers.length === 0) {
 }
 const agent = createAgentRuntime({ db, keys: env, monthlyCapUsd: env.MONTHLY_LLM_CAP_USD });
 
+const github = createGitHubClient(env.GITHUB_BOT_TOKEN);
+const images = { node: env.SANDBOX_IMAGE_NODE, python: env.SANDBOX_IMAGE_PYTHON };
+const agentJob = (type: "task" | "bugreport") =>
+  new AgentJobRunner({
+    type,
+    sandbox,
+    github,
+    agent,
+    token: env.GITHUB_BOT_TOKEN,
+    workspacesDir: env.WORKSPACES_DIR,
+    images,
+    listAttachments: (jobId) => listAttachments(db, jobId),
+  });
+
 const worker = new Worker({
   db,
   log,
@@ -46,15 +60,14 @@ const worker = new Worker({
   runner: new RouterRunner({
     runtest: new RuntestRunner({
       sandbox,
-      github: createGitHubClient(env.GITHUB_BOT_TOKEN),
+      github,
       token: env.GITHUB_BOT_TOKEN,
       workspacesDir: env.WORKSPACES_DIR,
-      images: { node: env.SANDBOX_IMAGE_NODE, python: env.SANDBOX_IMAGE_PYTHON },
+      images,
       agent,
     }),
-    // Replaced by the agent runners in M3/M4.
-    task: new StubRunner(),
-    bugreport: new StubRunner(),
+    task: agentJob("task"),
+    bugreport: agentJob("bugreport"),
   }),
 });
 

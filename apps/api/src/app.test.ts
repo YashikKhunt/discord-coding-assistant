@@ -23,7 +23,15 @@ describe.skipIf(!DATABASE_URL)("api (integration)", () => {
   let capUsd: number;
 
   let githubStatus: number | null = null;
+  const unused = async () => {
+    throw new Error("not used by the api");
+  };
   const github: GitHubClient = {
+    getAuthenticatedUser: unused,
+    getIssue: unused,
+    createPullRequest: unused,
+    createCommitStatus: unused,
+    upsertIssueComment: unused,
     checkRepoAccess: async () => {
       if (githubStatus) throw new GitHubApiError(githubStatus, "boom");
       return access;

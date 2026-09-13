@@ -19,8 +19,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 | M1 | Discord bot + API + queue, stub worker | ✅ |
 | M2 | Docker sandbox, repo detection, deterministic `/runtest` | ✅ |
 | M3 | LLM layer + agent loop + budgets | ✅ |
-| M4 | GitHub finalize: patches, guardrails, PRs | ⏳ |
-| M5 | Dashboard | — |
+| M4 | GitHub finalize: patches, guardrails, PRs | ✅ |
+| M5 | Dashboard | ⏳ |
 | M6 | VPS deployment | — |
 
 ## Development
@@ -70,6 +70,7 @@ Runs the repository's existing test suite in a disposable sandbox; no LLM is inv
 4. Install, run tests with a machine-readable reporter (JUnit or jest JSON), fall back to parsing console output.
 5. If tests fail and an LLM key is configured, a read-only agent investigates inside the same sandbox (reads the failing tests and code, may re-run a test) and reports the likely cause, confidence, a suggested fix and file references. Limited by the `runtest` profile: 10 steps, $0.30, and the 5 minute job deadline.
 6. Post a result embed with counts, the first failures, the likely cause, and the log tail attached.
+7. When `ref` is a pull request (`#12`), also set an `agent/runtest` commit status and create or update one results comment on the PR.
 
 Optional `.agent.yml` in the target repo:
 
@@ -80,6 +81,17 @@ test: pnpm vitest run --reporter=junit --outputFile=build/junit.xml
 testReport: build/junit.xml   # JUnit XML, or a jest --json file ending in .json
 envFile: .env.example         # copied to .env when .env is missing
 ```
+
+## `/task` and `/bugreport`
+
+1. Shallow-fetch the base branch, detect the stack, create a sandbox, install dependencies, and snapshot the tree (so files written by setup, like a new lockfile, stay out of the PR).
+2. The agent (Claude Sonnet 5 by default) explores, edits and runs the project's tooling inside the sandbox with `read_file`, `list_files`, `grep`, `bash`, `write_file` and `edit_file`. Linked issues are fetched; screenshots are passed as images and log files are copied into the sandbox. `/bugreport` asks the agent to reproduce the bug with a failing test before fixing it.
+3. The agent's changes are exported as a patch and checked: no `.github/workflows`, `.agent.yml`, `.env` files, symlinks, submodules, paths outside the repo, or secret-looking strings; at most 100 files / 5,000 changed lines.
+4. The test suite runs once more in the sandbox.
+5. On the host, the patch is applied to a **fresh clone** (hooks disabled, system/global git config ignored), committed as the bot account, and pushed to `agent/<job-id>-<slug>`.
+6. A pull request is opened: ready for review only if the agent finished and tests pass, otherwise a draft (titled `[partial] …` if the agent ran out of steps, time or budget).
+
+The bot never pushes to an existing branch, and a token without the `workflow` scope means GitHub itself rejects workflow changes.
 
 ## Agent loop and spend control
 
@@ -97,13 +109,13 @@ envFile: .env.example         # copied to .env when .env is missing
 apps/
   api/         Fastify: create/list/get/cancel jobs, repo checks, spend cap, attachments
   bot/         discord.js: slash commands, allowlist, forum publisher, notifier (outbox)
-  worker/      claims jobs, heartbeats, reaps lost jobs; /runtest runner + failure analysis (task/bugreport stubbed)
+  worker/      claims jobs, heartbeats, reaps lost jobs; runners for /runtest (+ analysis) and /task, /bugreport
 packages/
   agent/       tool loop with budgets and fallback, sandbox tools (read/list/grep/bash/write/edit)
   core/        env config, API contracts, job types/IDs, state machine
   db/          Drizzle schema, migrations, queue + job queries
   discord-ui/  embed and message builders
-  github/      GitHub REST client, token-safe git checkout
+  github/      GitHub REST client, token-safe checkout, patch guardrails, fresh-clone apply + push
   llm/         AI SDK provider resolution (Anthropic, OpenAI, OpenRouter), pricing, single-step calls
   profiles/    per-command limits and models
   sandbox/     Docker sandbox provider, repo detection, .agent.yml

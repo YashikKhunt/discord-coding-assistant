@@ -2,17 +2,55 @@ import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Job } from "@dca/db";
-import type { GitHubClient } from "@dca/github";
 import type { StepModel, StepRequest, StepResponse } from "@dca/llm";
 import { DockerSandboxProvider } from "@dca/sandbox";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../agent-runtime.ts";
 import type { RunContext } from "../runner.ts";
-import { type RuntestResult, RuntestRunner, summarizeTests } from "./runtest.ts";
+import { fakeGitHub } from "../test-helpers.ts";
+import { type RuntestResult, RuntestRunner, runtestComment, summarizeTests } from "./runtest.ts";
 
 const ENABLED = process.env.SANDBOX_TESTS === "1";
 const FIXTURES = new URL("./fixtures/", import.meta.url).pathname;
+
+describe("runtestComment", () => {
+  it("renders failures and the likely cause as markdown", () => {
+    const comment = runtestComment(
+      { shortId: "TEST-0009" },
+      {
+        kind: "runtest",
+        outcome: "failed",
+        summary: "1 passed · 1 failed",
+        ref: "#3",
+        commit: "0123456789abcdef",
+        stack: "node",
+        installCommand: "npm ci",
+        testCommand: "npm test",
+        exitCode: 1,
+        tests: {
+          passed: 1,
+          failed: 1,
+          skipped: 0,
+          durationMs: 5,
+          source: "junit",
+          failures: [{ name: "divides", message: "expected 2\n```inject```" }],
+        },
+        durationMs: 1,
+        notes: [],
+        logTail: "",
+        analysis: { likelyCause: "10 / 4 is 2.5", confidence: "high", relevantFiles: [] },
+        analysisNote: null,
+        model: "anthropic:claude-haiku-4-5",
+      },
+    );
+    expect(comment).toContain("### ❌ Tests failed · 1 passed · 1 failed");
+    expect(comment).toContain("Commit `0123456` · `npm test`");
+    expect(comment).toContain("**divides**");
+    expect(comment).not.toContain("```inject```");
+    expect(comment).toContain("**Likely cause** (high confidence): 10 / 4 is 2.5");
+  });
+});
 
 describe("summarizeTests", () => {
   it("formats counts and handles missing reports", () => {
@@ -35,9 +73,7 @@ describe("summarizeTests", () => {
 
 describe.skipIf(!ENABLED)("RuntestRunner (sandbox integration)", { timeout: 180_000 }, () => {
   let workspaces: string;
-  const github: GitHubClient = {
-    checkRepoAccess: async () => ({ ok: true, defaultBranch: "main", private: false }),
-  };
+  const github = fakeGitHub();
   let running = 0;
   const ctx: RunContext = {
     signal: new AbortController().signal,
