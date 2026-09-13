@@ -179,7 +179,9 @@ stateDiagram-v2
 
 ## 6. Agent profiles
 
-One agent runtime; behaviour comes from versioned profile files in `packages/profiles/`.
+One agent runtime; behaviour comes from versioned profiles in `packages/profiles/`.
+
+> **Implemented (M3):** profiles are typed TypeScript objects (limits, model, fallback) plus prompt constants, with per-command model overrides from env (`MODEL_<TYPE>`, `MODEL_<TYPE>_FALLBACK`) instead of YAML files. `/runtest` uses the loop only to explain failures, with read-only tools.
 
 ```yaml
 # packages/profiles/task.yaml
@@ -241,7 +243,7 @@ for step in 1..maxIterations:
   context guard: if tokens > 70% window → compact old tool outputs to summaries
 ```
 
-Cost = tokens × `packages/llm/pricing.ts` table (OpenRouter-reported cost used when present).
+Cost = tokens × `packages/llm/pricing.ts` table (OpenRouter-reported cost used when present). Models without a known price and no reported cost are charged at a deliberately high placeholder rate so budgets still stop them.
 
 ---
 

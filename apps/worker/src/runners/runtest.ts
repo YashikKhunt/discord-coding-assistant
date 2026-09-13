@@ -28,7 +28,9 @@ import {
   shellQuote,
 } from "@dca/sandbox";
 import { parseJestJson, parseJUnit, parseOutput, type TestSummary } from "@dca/test-report";
+import type { AgentRuntime } from "../agent-runtime.ts";
 import { AbortedError, type JobRunner, type RunContext, type RunOutcome } from "../runner.ts";
+import { analyzeFailures } from "./runtest-analysis.ts";
 
 export type { RuntestResult };
 
@@ -39,6 +41,8 @@ export interface RuntestRunnerOptions {
   workspacesDir: string;
   images: Record<Stack, string>;
   checkout?: (options: CheckoutOptions) => Promise<CheckoutResult>;
+  /** When set, failing runs get an LLM "likely cause" analysis inside the same sandbox. */
+  agent?: AgentRuntime;
 }
 
 const LOG_TAIL_BYTES = 24_000;
@@ -104,6 +108,9 @@ export class RuntestRunner implements JobRunner {
       durationMs: 0,
       notes: [],
       logTail: "",
+      analysis: null,
+      analysisNote: null,
+      model: null,
     };
     let sandbox: Sandbox | null = null;
 
@@ -180,9 +187,36 @@ export class RuntestRunner implements JobRunner {
       const failed = test.exitCode !== 0 || (result.tests?.failed ?? 0) > 0;
       result.outcome = failed ? "failed" : "passed";
       result.summary = summarizeTests(result.tests, test.exitCode);
-      result.durationMs = Date.now() - started;
       result.logTail = log.toString();
-      return { status: "succeeded", result, iterations: 0, costUsd: 0 };
+
+      let iterations = 0;
+      let costUsd = 0;
+      if (failed && this.#opts.agent) {
+        const analysis = await analyzeFailures({
+          runtime: this.#opts.agent,
+          job,
+          sandbox,
+          plan,
+          result,
+          deadline,
+          signal: ctx.signal,
+        });
+        this.#throwIfAborted(ctx);
+        result.analysis = analysis.analysis;
+        result.analysisNote = analysis.note;
+        result.model = analysis.model;
+        iterations = analysis.iterations;
+        costUsd = analysis.costUsd;
+      }
+
+      result.durationMs = Date.now() - started;
+      return {
+        status: "succeeded",
+        result,
+        iterations,
+        costUsd,
+        modelUsed: result.model ?? undefined,
+      };
     } catch (error) {
       if (error instanceof AbortedError) throw error;
       if (

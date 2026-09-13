@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Job } from "@dca/db";
 import type { GitHubClient } from "@dca/github";
+import type { StepModel, StepRequest, StepResponse } from "@dca/llm";
 import { DockerSandboxProvider } from "@dca/sandbox";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AgentRuntime } from "../agent-runtime.ts";
 import type { RunContext } from "../runner.ts";
 import { type RuntestResult, RuntestRunner, summarizeTests } from "./runtest.ts";
 
@@ -53,8 +55,9 @@ describe.skipIf(!ENABLED)("RuntestRunner (sandbox integration)", { timeout: 180_
     await rm(workspaces, { recursive: true, force: true });
   });
 
-  const runFixture = (fixture: string) => {
+  const runFixture = (fixture: string, agent?: AgentRuntime) => {
     const runner = new RuntestRunner({
+      agent,
       // No network: fixtures have no dependencies, which also proves installs stay offline.
       sandbox: new DockerSandboxProvider(),
       github,
@@ -91,6 +94,89 @@ describe.skipIf(!ENABLED)("RuntestRunner (sandbox integration)", { timeout: 180_
     expect(result.tests?.failures[0]?.name).toContain("divides");
     expect(result.logTail).toContain("$ node --test --test-reporter=spec");
     expect(running).toBeGreaterThan(0);
+  });
+
+  it("explains failures with an agent that reads the repo inside the sandbox", async () => {
+    const requests: StepRequest[] = [];
+    const toolOutputs: string[] = [];
+    const reply = (toolCalls: StepResponse["toolCalls"]): StepResponse => ({
+      model: "anthropic:claude-haiku-4-5",
+      text: "",
+      toolCalls,
+      finishReason: "tool-calls",
+      usage: { inputTokens: 500, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      costUsd: 0.001,
+      priced: true,
+      latencyMs: 1,
+      responseMessages: [
+        {
+          role: "assistant",
+          content: toolCalls.map((c) => ({
+            type: "tool-call" as const,
+            toolCallId: c.id,
+            toolName: c.name,
+            input: c.input,
+          })),
+        },
+      ],
+    });
+    const model: StepModel = {
+      spec: "anthropic:claude-haiku-4-5",
+      async step(request) {
+        requests.push(request);
+        return requests.length === 1
+          ? reply([{ id: "r1", name: "read_file", input: { path: "math.test.mjs" } }])
+          : reply([
+              {
+                id: "f1",
+                name: "finish",
+                input: {
+                  likelyCause: "The divides test expects 10 / 4 to be 2, but it is 2.5.",
+                  confidence: "high",
+                  relevantFiles: ["math.test.mjs:5"],
+                },
+              },
+            ]);
+      },
+    };
+    const agent: AgentRuntime = {
+      modelsFor: () => [model],
+      hooksFor: () => ({
+        onToolCall: async ({ output }) => {
+          toolOutputs.push(output);
+        },
+      }),
+    };
+
+    const outcome = await runFixture("node-mixed", agent);
+    const result = outcome.result as RuntestResult;
+    expect(outcome).toMatchObject({
+      status: "succeeded",
+      iterations: 2,
+      modelUsed: "anthropic:claude-haiku-4-5",
+    });
+    expect(outcome.costUsd).toBeCloseTo(0.002);
+    expect(result.analysis).toMatchObject({
+      confidence: "high",
+      relevantFiles: ["math.test.mjs:5"],
+    });
+    expect(result.analysisNote).toBeNull();
+    expect(toolOutputs[0]).toContain('test("divides"');
+    const prompt = String(requests[0]?.messages[0]?.content);
+    expect(prompt).toContain("divides");
+    expect(prompt).toContain("<log>");
+  });
+
+  it("does not analyse passing runs", async () => {
+    const agent: AgentRuntime = {
+      modelsFor: () => {
+        throw new Error("should not be called");
+      },
+      hooksFor: () => ({}),
+    };
+    const outcome = await runFixture("python-pass", agent);
+    expect((outcome.result as RuntestResult).analysis).toBeNull();
+    expect(outcome.costUsd).toBe(0);
   });
 
   it("runs a python unittest suite in a venv", async () => {

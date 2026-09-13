@@ -59,6 +59,22 @@ export function runtestEmbedParts(job: JobDto, result: RuntestResult): RuntestEm
     lines.push(result.summary);
   }
 
+  if (result.analysis) {
+    const { likelyCause, confidence, suggestedFix, relevantFiles } = result.analysis;
+    lines.push("", `**Likely cause** · ${confidence} confidence`, clip(likelyCause, 700));
+    if (suggestedFix) lines.push(`**Suggested fix:** ${clip(suggestedFix, 500)}`);
+    if (relevantFiles.length) {
+      lines.push(
+        relevantFiles
+          .slice(0, 5)
+          .map((file) => `\`${clip(file, 120)}\``)
+          .join(" · "),
+      );
+    }
+  } else if (result.analysisNote && result.outcome === "failed") {
+    lines.push("", `_${clip(result.analysisNote, 200)}_`);
+  }
+
   if (result.outcome === "error" && result.tests) lines.unshift(result.summary);
   if (result.outcome === "error" && result.logTail) {
     lines.push("**Last output**", codeBlock(result.logTail.slice(-1200), 1200));
@@ -69,6 +85,7 @@ export function runtestEmbedParts(job: JobDto, result: RuntestResult): RuntestEm
     result.exitCode === null ? null : `exit ${result.exitCode}`,
     seconds(result.durationMs),
     result.tests?.source === "output" ? "parsed from output" : null,
+    result.model ? `${result.model.split(":").pop()} · $${job.costUsd.toFixed(2)}` : null,
   ]
     .filter(Boolean)
     .join(" · ");

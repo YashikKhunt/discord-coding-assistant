@@ -32,6 +32,19 @@ export interface RuntestResult {
   durationMs: number;
   notes: string[];
   logTail: string;
+  /** LLM explanation of failing tests; null when tests passed or analysis was skipped. */
+  analysis: RuntestAnalysis | null;
+  /** Why analysis was skipped or stopped early, if it was. */
+  analysisNote: string | null;
+  /** `provider:model` that produced the analysis. */
+  model: string | null;
+}
+
+export interface RuntestAnalysis {
+  likelyCause: string;
+  confidence: "low" | "medium" | "high";
+  suggestedFix?: string;
+  relevantFiles: string[];
 }
 
 export function isRuntestResult(value: unknown): value is RuntestResult {

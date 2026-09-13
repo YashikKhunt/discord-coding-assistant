@@ -9,13 +9,16 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@dca/agent": "workspace:*",
     "@dca/core": "workspace:*",
     "@dca/db": "workspace:*",
     "@dca/github": "workspace:*",
+    "@dca/llm": "workspace:*",
     "@dca/profiles": "workspace:*",
     "@dca/sandbox": "workspace:*",
     "@dca/test-report": "workspace:*",
-    "pino": "^10.3.1"
+    "pino": "^10.3.1",
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "drizzle-orm": "^0.45.2"

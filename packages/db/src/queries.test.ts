@@ -3,8 +3,15 @@ import { eq, like } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, type DbHandle } from "./client.ts";
 import { runMigrations } from "./migrate.ts";
-import { claimNextJob, createJob, transitionJob } from "./queries.ts";
-import { jobEvents, jobs } from "./schema.ts";
+import {
+  claimNextJob,
+  createJob,
+  monthSpendUsd,
+  recordLlmCall,
+  recordToolCall,
+  transitionJob,
+} from "./queries.ts";
+import { jobEvents, jobs, toolCalls } from "./schema.ts";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 
@@ -75,6 +82,40 @@ describe.skipIf(!DATABASE_URL)("db queries (integration)", () => {
       (job) => job.status === "preparing" && !claimedIds.includes(job.id),
     );
     expect(orphaned).toEqual([]);
+  });
+
+  it("records llm and tool calls and accumulates job cost", async () => {
+    const job = await newJob();
+    const before = await monthSpendUsd(handle.db);
+    const call = (step: number, costUsd: number) =>
+      recordLlmCall(handle.db, {
+        jobId: job.id,
+        step,
+        provider: "anthropic",
+        model: "anthropic:claude-haiku-4-5",
+        inputTokens: 100,
+        outputTokens: 10,
+        cachedTokens: 0,
+        costUsd,
+        latencyMs: 5,
+      });
+    const first = await call(1, 0.0125);
+    await call(2, 0.0075);
+    await recordToolCall(handle.db, {
+      jobId: job.id,
+      llmCallId: first,
+      name: "grep",
+      args: { pattern: "x" },
+      output: "src/a.ts:1:x",
+      exitCode: 0,
+      durationMs: 3,
+    });
+
+    const [updated] = await handle.db.select().from(jobs).where(eq(jobs.id, job.id));
+    expect(updated).toMatchObject({ costUsd: 0.02, iterations: 2 });
+    expect(await monthSpendUsd(handle.db)).toBeCloseTo(before + 0.02, 6);
+    const tools = await handle.db.select().from(toolCalls).where(eq(toolCalls.jobId, job.id));
+    expect(tools).toMatchObject([{ name: "grep", llmCallId: first, exitCode: 0 }]);
   });
 
   it("allows only one of two racing transitions to win", async () => {

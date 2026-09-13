@@ -142,6 +142,9 @@ describe("runtest results", () => {
         durationMs: 72_000,
         notes: [],
         logTail: "npm ERR! missing script\n",
+        analysis: null,
+        analysisNote: null,
+        model: null,
         ...overrides,
       },
     });
@@ -158,6 +161,27 @@ describe("runtest results", () => {
     expect(embed.description).toContain("…and 2 more (see attached log)");
     expect(embed.description).not.toContain("hidden");
     expect(embed.footer?.text).toBe("node · exit 1 · 1m 12s");
+  });
+
+  it("adds the likely cause and model cost when analysis ran", () => {
+    const failed = runtest("failed", {
+      analysis: {
+        likelyCause: "verifyToken throws on expired JWTs instead of returning null.",
+        confidence: "high",
+        suggestedFix: "Catch TokenExpiredError in verifyToken.",
+        relevantFiles: ["src/auth/verify.ts:57"],
+      },
+      model: "anthropic:claude-haiku-4-5",
+    });
+    failed.costUsd = 0.04;
+    const embed = resultEmbed(failed);
+    expect(embed.description).toContain("**Likely cause** · high confidence");
+    expect(embed.description).toContain("verifyToken throws on expired JWTs");
+    expect(embed.description).toContain("`src/auth/verify.ts:57`");
+    expect(embed.footer?.text).toBe("node · exit 1 · 1m 12s · claude-haiku-4-5 · $0.04");
+
+    const skipped = resultEmbed(runtest("failed", { analysisNote: "Analysis ran out of time" }));
+    expect(skipped.description).toContain("_Analysis ran out of time_");
   });
 
   it("tags failed test runs as failed and attaches the log", () => {

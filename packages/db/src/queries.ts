@@ -9,6 +9,7 @@ import {
   jobs,
   llmCalls,
   type NewJob,
+  toolCalls,
 } from "./schema.ts";
 
 type Executor = Pick<Db, "insert" | "update" | "select">;
@@ -293,4 +294,48 @@ export function toJobDto(job: Job): JobDto {
     finishedAt: job.finishedAt?.toISOString() ?? null,
     createdAt: job.createdAt.toISOString(),
   };
+}
+
+export interface LlmCallInput {
+  jobId: string;
+  step: number;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  costUsd: number;
+  latencyMs: number;
+  request?: unknown;
+  response?: unknown;
+}
+
+/** Records a model call and adds its cost to the job in one transaction. */
+export async function recordLlmCall(db: Db, input: LlmCallInput): Promise<number> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx.insert(llmCalls).values(input).returning({ id: llmCalls.id });
+    await tx
+      .update(jobs)
+      .set({
+        costUsd: sql`${jobs.costUsd} + ${input.costUsd}`,
+        iterations: sql`greatest(${jobs.iterations}, ${input.step})`,
+      })
+      .where(eq(jobs.id, input.jobId));
+    if (!row) throw new Error("Failed to record llm call");
+    return row.id;
+  });
+}
+
+export interface ToolCallInput {
+  jobId: string;
+  llmCallId: number | null;
+  name: string;
+  args: unknown;
+  output: string;
+  exitCode: number | null;
+  durationMs: number;
+}
+
+export async function recordToolCall(db: Db, input: ToolCallInput): Promise<void> {
+  await db.insert(toolCalls).values({ ...input, args: input.args ?? {} });
 }
