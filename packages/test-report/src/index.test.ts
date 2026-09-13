@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseJestJson, parseJUnit, parseOutput } from "./index.ts";
+import { noTestsCollected, parseJestJson, parseJUnit, parseOutput } from "./index.ts";
 
 // Fixtures are real reports: one passing, one failing, one skipped test (+ extras per runner).
 const fixture = (name: string) =>
@@ -69,5 +69,23 @@ describe("parseOutput", () => {
 
   it("returns null for unrelated output", () => {
     expect(parseOutput("Compiling...\nDone.")).toBeNull();
+  });
+});
+
+describe("noTestsCollected", () => {
+  it("recognises exit code 5 with nothing run", () => {
+    expect(noTestsCollected(5, null)).toBe(true);
+    expect(noTestsCollected(5, parseOutput("Ran 0 tests in 0.000s\n\nNO TESTS RAN"))).toBe(true);
+    expect(noTestsCollected(1, null)).toBe(false);
+    expect(
+      noTestsCollected(5, {
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        durationMs: 1,
+        failures: [],
+        source: "junit",
+      }),
+    ).toBe(false);
   });
 });

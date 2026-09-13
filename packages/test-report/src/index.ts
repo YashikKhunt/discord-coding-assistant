@@ -247,3 +247,12 @@ export function parseOutput(output: string): TestSummary | null {
   }
   return null;
 }
+
+/**
+ * pytest and unittest exit with code 5 when no tests were collected. That means "no tests",
+ * not "tests failed".
+ */
+export function noTestsCollected(exitCode: number | null, summary: TestSummary | null): boolean {
+  if (exitCode !== 5) return false;
+  return !summary || summary.passed + summary.failed + summary.skipped === 0;
+}

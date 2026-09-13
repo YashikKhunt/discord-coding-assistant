@@ -46,6 +46,16 @@ function git(
   });
 }
 
+/** Applies a checked patch to a host worktree (no index, no hooks) so files can be re-inspected. */
+export async function applyPatchToWorktree(dir: string, patch: string): Promise<void> {
+  const apply = await git(["-c", "core.hooksPath=/dev/null", "apply", "--whitespace=nowarn", "-"], {
+    cwd: dir,
+    stdin: patch,
+  });
+  if (apply.code !== 0)
+    throw new PushError(`git apply failed: ${apply.stderr.trim().slice(0, 500)}`);
+}
+
 export interface PushPatchOptions {
   repo: RepoRef;
   /** Commit the patch was produced against. */

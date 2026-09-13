@@ -155,9 +155,38 @@ function readPyproject(files: RepoFiles): Pyproject {
   }
 }
 
+export const SKIPPED_PACKAGE_MARKER = "dca-skipped-package:";
+
+/**
+ * Installs a requirements file in one resolution, and if that fails (e.g. a package that has
+ * to download sources from a host the egress proxy blocks), retries package by package so one
+ * unbuildable dependency does not stop the rest. Skipped packages are printed with a marker.
+ */
+function requirementsInstall(file: string): string {
+  // Braced so the fallback only covers this step, not earlier `&&` steps like venv creation.
+  return [
+    `{ uv pip install -r ${file}`,
+    "||",
+    `{ grep -vE '^[[:space:]]*(#|-|$)' ${file} | sed -E 's/[[:space:]]+#.*$//' | while read -r req; do`,
+    `uv pip install "$req" || echo "${SKIPPED_PACKAGE_MARKER} $req"; done; }; }`,
+  ].join(" ");
+}
+
+/** Packages reported as skipped by a Python install step. */
+export function skippedPackages(output: string): string[] {
+  return [...output.matchAll(new RegExp(`${SKIPPED_PACKAGE_MARKER} (.+)`, "g"))].map((m) =>
+    (m[1] ?? "").trim(),
+  );
+}
+
 function detectPython(files: RepoFiles, notes: string[]): Omit<RepoPlan, "envFile"> {
   const env = { VIRTUAL_ENV: PY_VENV, PATH: `${PY_VENV}/bin:/usr/local/bin:/usr/bin:/bin` };
-  const steps = [`uv venv ${PY_VENV}`];
+  // Honour .python-version / requires-python when the image has that interpreter, else fall back
+  // to the system Python. `-m venv` is offline and includes pip, so the agent's own `pip install`
+  // lands in the same environment the tests use.
+  const steps = [
+    `PY=$(uv python find 2>/dev/null || command -v python3) && "$PY" -m venv ${PY_VENV}`,
+  ];
   const pyproject = readPyproject(files);
   // uv only warns about unknown extras/groups, so install exactly the ones the project declares.
   const extras = PY_TEST_GROUPS.filter(
@@ -170,7 +199,7 @@ function detectPython(files: RepoFiles, notes: string[]): Omit<RepoPlan, "envFil
     steps.push("uv sync --frozen --all-extras --all-groups --active");
   } else {
     for (const req of ["requirements.txt", "requirements-dev.txt", "requirements-test.txt"]) {
-      if (files.exists(req)) steps.push(`uv pip install -r ${req}`);
+      if (files.exists(req)) steps.push(requirementsInstall(req));
     }
     if (files.exists("pyproject.toml") || files.exists("setup.py")) {
       const target = extras.length ? `".[${extras.join(",")}]"` : ".";

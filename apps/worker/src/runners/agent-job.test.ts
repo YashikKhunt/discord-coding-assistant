@@ -118,9 +118,13 @@ describe.skipIf(!ENABLED)(
         requestedByDiscordId: "111111111111111111",
       }) as Job;
 
-    const runner = (model: StepModel) =>
+    const runner = (
+      model: StepModel,
+      remoteUrl = remote,
+      type: "task" | "bugreport" = "bugreport",
+    ) =>
       new AgentJobRunner({
-        type: "bugreport",
+        type,
         sandbox: new DockerSandboxProvider(),
         github: fakeGitHub({
           getAuthenticatedUser: async () => ({ login: "DoomsCode-Y", id: 42 }),
@@ -134,8 +138,8 @@ describe.skipIf(!ENABLED)(
         workspacesDir: workspaces,
         images: { node: "dca-sandbox-node:latest", python: "dca-sandbox-python:latest" },
         listAttachments: async () => [],
-        checkout: (options) => checkoutRepo({ ...options, remoteUrl: remote }),
-        push: (options) => pushPatch({ ...options, remoteUrl: remote }),
+        checkout: (options) => checkoutRepo({ ...options, remoteUrl }),
+        push: (options) => pushPatch({ ...options, remoteUrl }),
       });
 
     const ctx = {
@@ -215,6 +219,71 @@ describe.skipIf(!ENABLED)(
       expect(execFileSync("git", ["ls-files"], { cwd: verify, encoding: "utf8" })).not.toMatch(
         /\.agent-report|\.env|package-lock\.json/,
       );
+    });
+
+    it("re-detects a test setup added by the agent and opens a ready PR", async () => {
+      // A repo with no test script at all: the initial plan has no test command.
+      const bare = path.join(root, "no-tests.git");
+      const seed = path.join(root, "no-tests-seed");
+      execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare]);
+      execFileSync("git", ["init", "-q", "-b", "main", seed]);
+      await writeFile(
+        path.join(seed, "package.json"),
+        `${JSON.stringify({ name: "adder", private: true, type: "module" }, null, 2)}\n`,
+      );
+      await writeFile(path.join(seed, "add.js"), "export const add = (a, b) => a + b;\n");
+      const git = (...args: string[]) =>
+        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: seed });
+      git("add", ".");
+      git("commit", "-qm", "base");
+      git("push", "-q", bare, "main");
+
+      const model = scriptedModel([
+        [
+          {
+            id: "1",
+            name: "write_file",
+            input: {
+              path: "package.json",
+              content: `${JSON.stringify({ name: "adder", private: true, type: "module", scripts: { test: "node --test" } }, null, 2)}\n`,
+            },
+          },
+          {
+            id: "2",
+            name: "write_file",
+            input: {
+              path: "add.test.js",
+              content:
+                'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { add } from "./add.js";\n\ntest("adds", () => assert.equal(add(2, 3), 5));\n',
+            },
+          },
+        ],
+        [
+          {
+            id: "3",
+            name: "finish",
+            input: {
+              title: "Add tests for add",
+              summary: "Adds node:test coverage.",
+              verification: "node --test",
+              complete: true,
+            },
+          },
+        ],
+      ]);
+      const outcome = await runner(model, bare, "task").run(job("TASK-0005"), ctx);
+      const result = outcome.result as AgentJobResult;
+      expect(outcome.status, JSON.stringify(result, null, 2)).toBe("succeeded");
+      expect(result).toMatchObject({
+        outcome: "pr_opened",
+        tests: {
+          command: expect.stringContaining("node --test"),
+          passed: true,
+          summary: "1 passed · 0 failed",
+        },
+      });
+      expect(prs.at(-1)).toMatchObject({ draft: false, title: "Add tests for add" });
+      expect(prs.at(-1)?.body).not.toMatch(/\n\n- /);
     });
 
     it("blocks patches that touch CI workflows and pushes nothing", async () => {

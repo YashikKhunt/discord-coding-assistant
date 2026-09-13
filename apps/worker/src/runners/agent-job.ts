@@ -4,6 +4,7 @@ import { type AgentStopReason, readOnlyTools, runAgent, writeTools } from "@dca/
 import { type AgentJobResult, parseRepo, type RepoRef } from "@dca/core";
 import type { Attachment, Job } from "@dca/db";
 import {
+  applyPatchToWorktree,
   branchSlug,
   CheckoutError,
   type CheckoutOptions,
@@ -29,8 +30,9 @@ import {
   type SandboxProvider,
   type Stack,
   shellQuote,
+  skippedPackages,
 } from "@dca/sandbox";
-import { parseJestJson, parseJUnit, parseOutput } from "@dca/test-report";
+import { noTestsCollected, parseJestJson, parseJUnit, parseOutput } from "@dca/test-report";
 import type { UserContent } from "ai";
 import { z } from "zod";
 import type { AgentRuntime } from "../agent-runtime.ts";
@@ -73,6 +75,8 @@ type FinishResult =
   | z.infer<(typeof finishSchemas)["task"]>;
 
 const INSTALL_TIMEOUT_MS = 8 * 60_000;
+const DEPENDENCY_MANIFEST =
+  /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements[^/]*\.txt|pyproject\.toml|uv\.lock|setup\.py|setup\.cfg)$/;
 const MIN_AGENT_MS = 60_000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const ATTACHMENTS_DIR = "/workspace/attachments";
@@ -191,6 +195,7 @@ export class AgentJobRunner implements JobRunner {
           timeoutMs: 10_000,
         });
       }
+      let installOk = true;
       if (plan?.install) {
         const install = await sandbox.exec(plan.install, {
           env: plan.env,
@@ -199,7 +204,12 @@ export class AgentJobRunner implements JobRunner {
             deadline - finalizeReserveMs - MIN_AGENT_MS - Date.now(),
           ),
         });
+        const skipped = skippedPackages(install.output);
+        if (skipped.length) {
+          result.notes.push(`Could not install: ${skipped.join(", ")}.`);
+        }
         if (install.exitCode !== 0) {
+          installOk = false;
           ctx.log.warn(
             { exitCode: install.exitCode, output: install.output.slice(-2_000) },
             "dependency install failed",
@@ -295,7 +305,31 @@ export class AgentJobRunner implements JobRunner {
         return fail(`Changes were blocked by safety checks: ${violations.slice(0, 3).join("; ")}`);
       }
 
-      await this.#runFinalTests(sandbox, plan, result, deadline);
+      // Re-detect from the changed tree: the agent may have added a test setup or dependencies.
+      const finalPlan = await this.#replan(workdir, patch, plan, result.notes);
+      const manifestChanged = stats.files.some((file) => DEPENDENCY_MANIFEST.test(file.path));
+      if (
+        finalPlan?.install &&
+        (!installOk || manifestChanged || finalPlan.install !== plan?.install)
+      ) {
+        const timeoutMs = Math.min(INSTALL_TIMEOUT_MS, deadline - Date.now() - 90_000);
+        if (timeoutMs > 20_000) {
+          const reinstall = await sandbox.exec(finalPlan.install, {
+            env: finalPlan.env,
+            timeoutMs,
+          });
+          const skippedAgain = skippedPackages(reinstall.output);
+          if (skippedAgain.length) {
+            result.notes.push(`Could not install: ${skippedAgain.join(", ")}.`);
+          }
+          if (reinstall.exitCode !== 0) {
+            result.notes.push(
+              `Dependency install before the final test run failed (exit ${reinstall.exitCode}).`,
+            );
+          }
+        }
+      }
+      await this.#runFinalTests(sandbox, finalPlan, result, deadline);
       throwIfAborted();
 
       // Point of no return: from here the branch and PR exist even if the user cancels.
@@ -314,6 +348,13 @@ export class AgentJobRunner implements JobRunner {
       });
 
       const ready = complete && result.tests.passed === true;
+      if (!ready && complete) {
+        result.notes.push(
+          result.tests.passed === false
+            ? "Opened as draft because tests are failing."
+            : "Opened as draft because no test run confirmed the change.",
+        );
+      }
       const pr = await this.#opts.github.createPullRequest(repo, {
         head: result.branch,
         base: result.base,
@@ -324,13 +365,6 @@ export class AgentJobRunner implements JobRunner {
       result.prNumber = pr.number;
       result.prUrl = pr.url;
       result.outcome = ready ? "pr_opened" : "draft_pr";
-      if (!ready && complete) {
-        result.notes.push(
-          result.tests.passed === false
-            ? "Opened as draft because tests are failing."
-            : "Opened as draft because no test run confirmed the change.",
-        );
-      }
       return done(complete ? "succeeded" : "partial");
     } catch (error) {
       if (error instanceof AbortedError) throw error;
@@ -462,6 +496,11 @@ export class AgentJobRunner implements JobRunner {
       }
     }
     summary ??= parseOutput(run.output);
+    if (noTestsCollected(run.exitCode, summary)) {
+      result.tests.passed = null;
+      result.tests.summary = "no tests were collected";
+      return;
+    }
     result.tests.passed = run.exitCode === 0 && (summary?.failed ?? 0) === 0;
     result.tests.summary = summarizeTests(summary, run.exitCode);
   }
@@ -473,26 +512,43 @@ export class AgentJobRunner implements JobRunner {
   }
 
   #prBody(job: Job, result: AgentJobResult, costUsd: number, complete: boolean): string {
-    const sections = [
-      complete
-        ? ""
-        : "> ⚠️ **Partial work.** The agent stopped before finishing; review carefully.\n",
+    const tests = result.tests.command
+      ? `\`${result.tests.command}\` → ${result.tests.summary}`
+      : result.tests.summary;
+    const checks = [
+      `- Tests: ${tests}`,
+      ...(result.reproduced === null
+        ? []
+        : [`- Bug reproduced before fix: ${result.reproduced ? "yes" : "no"}`]),
+      ...result.notes.map((note) => `- ${note}`),
+    ];
+    return [
+      ...(complete
+        ? []
+        : ["> ⚠️ **Partial work.** The agent stopped before finishing; review carefully.", ""]),
       result.summary,
       "",
       "### Checks",
-      `- Tests: ${result.tests.command ? `\`${result.tests.command}\` → ${result.tests.summary}` : result.tests.summary}`,
-      result.reproduced === null
-        ? ""
-        : `- Bug reproduced before fix: ${result.reproduced ? "yes" : "no"}`,
-      ...result.notes.map((note) => `- ${note}`),
+      ...checks,
       "",
       "---",
       `🤖 Opened by the Discord coding agent for **${job.shortId}** (\`${job.type}\`, requested by Discord user ${job.requestedByDiscordId}).`,
       `Model: \`${result.model ?? "unknown"}\` · Cost: $${costUsd.toFixed(2)}`,
-    ];
-    return sections
-      .filter((line, i, all) => line !== "" || (all[i - 1] ?? "") !== "")
-      .join("\n")
-      .trim();
+    ].join("\n");
+  }
+
+  async #replan(
+    workdir: string,
+    patch: string,
+    original: RepoPlan | null,
+    notes: string[],
+  ): Promise<RepoPlan | null> {
+    try {
+      await applyPatchToWorktree(workdir, patch);
+    } catch {
+      notes.push("Could not re-inspect the changed files; used the original test command.");
+      return original;
+    }
+    return this.#plan(workdir, []) ?? original;
   }
 }

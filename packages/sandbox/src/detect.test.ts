@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AgentConfigError, parseAgentConfig } from "./agent-config.ts";
-import { DetectionError, planRepo, type RepoFiles } from "./detect.ts";
+import { DetectionError, planRepo, type RepoFiles, skippedPackages } from "./detect.ts";
 
 function repo(files: Record<string, string>): RepoFiles {
   return {
@@ -107,7 +107,7 @@ describe("planRepo: python", () => {
       }),
     );
     expect(plan.install).toBe(
-      'uv venv /workspace/venv && uv pip install -e ".[tests]" --group dev && (python -c "import pytest" 2>/dev/null || uv pip install pytest)',
+      'PY=$(uv python find 2>/dev/null || command -v python3) && "$PY" -m venv /workspace/venv && uv pip install -e ".[tests]" --group dev && (python -c "import pytest" 2>/dev/null || uv pip install pytest)',
     );
     expect(plan.test).toContain("pytest");
   });
@@ -118,9 +118,21 @@ describe("planRepo: python", () => {
 
   it("installs requirements and falls back to unittest", () => {
     const plan = planRepo(repo({ "requirements.txt": "requests\n", "app/test_x.py": "" }));
-    expect(plan.install).toBe("uv venv /workspace/venv && uv pip install -r requirements.txt");
+    expect(plan.install).toBe(
+      'PY=$(uv python find 2>/dev/null || command -v python3) && "$PY" -m venv /workspace/venv && { uv pip install -r requirements.txt || { grep -vE \'^[[:space:]]*(#|-|$)\' requirements.txt | sed -E \'s/[[:space:]]+#.*$//\' | while read -r req; do uv pip install "$req" || echo "dca-skipped-package: $req"; done; }; }',
+    );
     expect(plan.test).toBe("python -m unittest discover -v");
     expect(plan.reportFormat).toBe("none");
+  });
+});
+
+describe("skippedPackages", () => {
+  it("extracts packages the resilient install skipped", () => {
+    expect(
+      skippedPackages(
+        "ok\ndca-skipped-package: pytrec_eval-terrier==0.5.10\nmore\ndca-skipped-package: lxml==6.1.1\n",
+      ),
+    ).toEqual(["pytrec_eval-terrier==0.5.10", "lxml==6.1.1"]);
   });
 });
 

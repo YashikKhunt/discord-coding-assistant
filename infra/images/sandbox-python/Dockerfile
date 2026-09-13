@@ -11,6 +11,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 1000 sandbox && useradd -u 1000 -g 1000 -d /workspace/home -s /bin/bash sandbox
 
+# Extra interpreters so `.python-version` / requires-python pins work without downloads at
+# job time (the sandbox has no route to python.org or GitHub). 3.12 is the system Python.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN uv python install 3.10 3.11 3.13 \
+ && chmod -R a+rX /opt/uv-python
+
 RUN mkdir -p /workspace/repo /workspace/home && chown -R 1000:1000 /workspace
 USER 1000:1000
 WORKDIR /workspace/repo

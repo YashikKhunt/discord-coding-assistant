@@ -26,8 +26,15 @@ import {
   type SandboxProvider,
   type Stack,
   shellQuote,
+  skippedPackages,
 } from "@dca/sandbox";
-import { parseJestJson, parseJUnit, parseOutput, type TestSummary } from "@dca/test-report";
+import {
+  noTestsCollected,
+  parseJestJson,
+  parseJUnit,
+  parseOutput,
+  type TestSummary,
+} from "@dca/test-report";
 import type { AgentRuntime } from "../agent-runtime.ts";
 import { AbortedError, type JobRunner, type RunContext, type RunOutcome } from "../runner.ts";
 import { analyzeFailures } from "./runtest-analysis.ts";
@@ -218,6 +225,10 @@ export class RuntestRunner implements JobRunner {
 
       if (plan.install) {
         const install = await this.#step(sandbox, plan.install, plan, log, remaining(), ctx);
+        const skipped = skippedPackages(install.output);
+        if (skipped.length) {
+          result.notes.push(`Could not install: ${skipped.join(", ")}. Tests ran without them.`);
+        }
         if (install.timedOut) return fail("Timed out while installing dependencies");
         if (install.exitCode !== 0) {
           return fail(`Dependency install failed with exit code ${install.exitCode}`);
@@ -230,6 +241,9 @@ export class RuntestRunner implements JobRunner {
       if (test.timedOut) return fail("Timed out while running tests");
 
       result.tests = await this.#readReport(sandbox, plan, test);
+      if (noTestsCollected(test.exitCode, result.tests)) {
+        return fail("No tests were collected. Check the test configuration or add an .agent.yml.");
+      }
       const ran = result.tests !== null || test.exitCode === 0;
       if (!ran && test.exitCode !== 1) {
         // Exit code 1 conventionally means "tests failed"; anything else without a report is a crash.

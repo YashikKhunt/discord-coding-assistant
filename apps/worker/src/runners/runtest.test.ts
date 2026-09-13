@@ -219,6 +219,8 @@ describe.skipIf(!ENABLED)("RuntestRunner (sandbox integration)", { timeout: 180_
     const outcome = await runFixture("python-pass");
     const result = outcome.result as RuntestResult;
     expect(outcome.status, result.logTail).toBe("succeeded");
+    // .python-version pins 3.11: the venv must use the interpreter baked into the image, offline.
+    expect(result.logTail).not.toContain("error");
     expect(result).toMatchObject({
       outcome: "passed",
       stack: "python",
