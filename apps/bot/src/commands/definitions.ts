@@ -62,6 +62,12 @@ bugreport.addStringOption((option) =>
 bugreport.addStringOption((option) =>
   option.setName("issue").setDescription("Related GitHub issue URL or number").setMaxLength(300),
 );
+bugreport.addStringOption((option) =>
+  option
+    .setName("base")
+    .setDescription("Branch with the bug (defaults to the repo default branch)")
+    .setMaxLength(255),
+);
 withAttachments(bugreport);
 
 const runtest = withRepo(base("runtest", "Run the repository's test suite"));

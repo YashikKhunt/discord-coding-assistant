@@ -12,6 +12,12 @@ describe("resolveRepoPath", () => {
     expect(resolveRepoPath(sandbox, "src/a.ts")).toBe("/workspace/repo/src/a.ts");
     expect(resolveRepoPath(sandbox, "/src/./b/../a.ts")).toBe("/workspace/repo/src/a.ts");
     expect(() => resolveRepoPath(sandbox, "../../etc/passwd")).toThrow(/escapes/);
+    // Absolute paths inside the checkout (as seen in bash output) are accepted as-is.
+    expect(resolveRepoPath(sandbox, "/workspace/repo/chunker.py")).toBe(
+      "/workspace/repo/chunker.py",
+    );
+    expect(resolveRepoPath(sandbox, "/workspace/repo")).toBe("/workspace/repo");
+    expect(() => resolveRepoPath(sandbox, "/workspace/repo/../../etc/passwd")).toThrow(/escapes/);
   });
 });
 

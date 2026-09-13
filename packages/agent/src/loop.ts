@@ -217,14 +217,28 @@ export async function runAgent<Result>(
       if (parsed.success) return outcome("finished", parsed.data);
     }
 
+    // Tool calls that already carry a result in the model's response must not get a second one:
+    // providers reject a tool_use with more than one tool_result.
+    const answered = new Set<string>();
+    for (const message of response.responseMessages) {
+      if (typeof message.content === "string") continue;
+      for (const part of message.content) {
+        if (part.type === "tool-result") answered.add(part.toolCallId);
+      }
+    }
+
     // Execute every call and return all results in one message so parallel calls stay paired.
     const results = [];
     for (const call of response.toolCalls) {
+      if (answered.has(call.id)) continue;
       const started = Date.now();
       let result: ToolOutput;
       const tool = toolsByName.get(call.name);
       if (call.invalidReason) {
-        result = { output: `Invalid input for ${call.name}: ${call.invalidReason}`, isError: true };
+        const reason = call.invalidReason.startsWith("Invalid input")
+          ? call.invalidReason
+          : `Invalid input for ${call.name}: ${call.invalidReason}`;
+        result = { output: `${reason}\nFix the arguments and call the tool again.`, isError: true };
       } else if (call.name === FINISH) {
         const parsed = options.finishSchema.safeParse(call.input);
         result = {
@@ -259,7 +273,7 @@ export async function runAgent<Result>(
           : { type: "text" as const, value: output },
       });
     }
-    messages.push({ role: "tool", content: results });
+    if (results.length) messages.push({ role: "tool", content: results });
 
     const inputTokens =
       response.usage.inputTokens + response.usage.cacheReadTokens + response.usage.cacheWriteTokens;

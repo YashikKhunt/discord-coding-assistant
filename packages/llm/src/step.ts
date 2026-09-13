@@ -35,7 +35,7 @@ export interface StepResponse {
   /** False when neither a price table entry nor provider-reported cost was available. */
   priced: boolean;
   latencyMs: number;
-  /** Assistant (and any provider tool) messages to append to the conversation. */
+  /** Assistant messages to append to the conversation; tool results are the caller's job. */
   responseMessages: ModelMessage[];
 }
 
@@ -131,7 +131,13 @@ export function createStepModel(spec: ModelSpec, resolve: ModelResolver): StepMo
         costUsd: reported ?? costUsd(price, usage),
         priced: reported !== null || known,
         latencyMs: Date.now() - started,
-        responseMessages: result.responseMessages as ModelMessage[],
+        // For invalid tool input (bad JSON, schema mismatch, unknown tool) the SDK appends its own
+        // `tool` message with an error result. The agent loop answers every tool call itself, so
+        // keeping the SDK's copy would send two results for one call and the provider rejects
+        // the next request ("each tool_use must have a single result").
+        responseMessages: (result.responseMessages as ModelMessage[]).filter(
+          (message) => message.role !== "tool",
+        ),
       };
     },
   };

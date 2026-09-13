@@ -52,10 +52,22 @@ describe("buildCreateJobRequest", () => {
     expect(
       buildCreateJobRequest(
         "bugreport",
-        options({ repo: "o/r", description: "crash", steps: "1. open", issue: "#4" }),
+        options({
+          repo: "o/r",
+          description: "crash",
+          steps: "1. open",
+          issue: "#4",
+          base: " agent/task-0050-fix ",
+        }),
         "1",
       ).input,
-    ).toEqual({ description: "crash", steps: "1. open", expected: undefined, issue: "#4" });
+    ).toEqual({
+      description: "crash",
+      steps: "1. open",
+      expected: undefined,
+      issue: "#4",
+      base: "agent/task-0050-fix",
+    });
 
     expect(buildCreateJobRequest("runtest", options({ repo: "o/r", ref: "#12" }), "1")).toEqual({
       type: "runtest",

@@ -21,5 +21,7 @@ describe("slash command definitions", () => {
       "attachment2",
       "attachment3",
     ]);
+    const bugreport = payloads[1];
+    expect(bugreport?.options?.map((option) => option.name)).toContain("base");
   });
 });

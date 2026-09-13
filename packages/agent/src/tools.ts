@@ -10,8 +10,13 @@ import type { AgentTool, ToolOutput } from "./loop.ts";
 const relativePath = z.string().min(1).max(500).describe("Path relative to the repository root");
 
 function resolveRepoPath(sandbox: Sandbox, path: string): string {
+  // Models often use the absolute sandbox path they saw in bash output; accept it as repo-relative.
+  const relative =
+    path === sandbox.repoDir || path.startsWith(`${sandbox.repoDir}/`)
+      ? path.slice(sandbox.repoDir.length)
+      : path;
   const parts: string[] = [];
-  for (const part of path.replace(/^\/+/, "").split("/")) {
+  for (const part of relative.replace(/^\/+/, "").split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") {
       if (parts.length === 0) throw new Error(`Path escapes the repository: ${path}`);

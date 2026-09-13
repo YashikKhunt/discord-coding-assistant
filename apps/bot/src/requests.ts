@@ -50,6 +50,7 @@ export function buildCreateJobRequest(
           steps: clean(options.getString("steps")),
           expected: clean(options.getString("expected")),
           issue: clean(options.getString("issue")),
+          base: clean(options.getString("base")),
         },
         attachments,
       };
