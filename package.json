@@ -11,7 +11,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "vitest run",
-    "dev": "pnpm --parallel --filter @dca/api --filter @dca/worker --filter @dca/bot dev",
+    "dev": "pnpm --parallel --filter @dca/api --filter @dca/worker --filter @dca/bot --filter @dca/dashboard dev",
     "dev:api": "pnpm --filter @dca/api dev",
     "dev:worker": "pnpm --filter @dca/worker dev",
     "dev:bot": "pnpm --filter @dca/bot dev",
@@ -20,7 +20,8 @@
     "db:migrate": "pnpm --filter @dca/db migrate",
     "infra:up": "docker compose -f infra/compose.yml up -d",
     "infra:down": "docker compose -f infra/compose.yml down",
-    "sandbox:build": "docker build -t dca-sandbox-node:latest infra/images/sandbox-node && docker build -t dca-sandbox-python:latest infra/images/sandbox-python"
+    "sandbox:build": "docker build -t dca-sandbox-node:latest infra/images/sandbox-node && docker build -t dca-sandbox-python:latest infra/images/sandbox-python",
+    "dev:dashboard": "pnpm --filter @dca/dashboard dev"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

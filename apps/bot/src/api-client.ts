@@ -45,14 +45,14 @@ export function createApiClient(baseUrl: string, token: string, doFetch = fetch)
   }
 
   return {
-    createJob: (request) => call("POST", "/jobs", request),
-    getJob: (shortId) => call("GET", `/jobs/${encodeURIComponent(shortId)}`),
+    createJob: (request) => call("POST", "/internal/jobs", request),
+    getJob: (shortId) => call("GET", `/internal/jobs/${encodeURIComponent(shortId)}`),
     listJobs: ({ limit, status }) => {
       const params = new URLSearchParams();
       if (limit) params.set("limit", String(limit));
       if (status) params.set("status", status);
-      return call("GET", `/jobs?${params}`);
+      return call("GET", `/internal/jobs?${params}`);
     },
-    cancelJob: (shortId) => call("POST", `/jobs/${encodeURIComponent(shortId)}/cancel`),
+    cancelJob: (shortId) => call("POST", `/internal/jobs/${encodeURIComponent(shortId)}/cancel`),
   };
 }

@@ -428,7 +428,9 @@ dashboard_sessions  id · discord_user_id · expires_at
 
 ## 11. Dashboard
 
-Next.js app, Discord OAuth2 login (scope `identify`, `guilds.members.read` for role check) → session cookie; same allowlist as bot.
+Discord OAuth2 login (scope `identify`, `guilds.members.read` for role check) → session cookie; same allowlist as bot.
+
+> **Implemented (M5):** a Vite + React single-page app instead of Next.js, served by the API in production (one fewer service; same-origin cookies). The dashboard API lives under `/api/*` and OAuth under `/auth/*`; the bot's token-authenticated routes moved to `/internal/*` so they never collide with page URLs such as `/jobs/TASK-0001`. Sessions are stored as SHA-256 hashes of random tokens; writes require a same-origin `Origin` header. Job creation from the dashboard has no file attachments in v1.
 
 | Page | Content |
 |---|---|

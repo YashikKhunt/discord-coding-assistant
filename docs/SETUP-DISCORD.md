@@ -47,6 +47,22 @@ pnpm dev               # api + worker + bot
 On first start the bot creates these forum tags if they are missing:
 `task`, `bugreport`, `runtest`, `queued`, `running`, `passed`, `failed`, `partial`, `cancelled`.
 
+## 5. Dashboard sign-in (Discord OAuth)
+
+The web dashboard uses "Sign in with Discord" and the same allowlist as the bot.
+
+1. Developer Portal → your application → **OAuth2** → **Redirects** → add
+   `http://localhost:3000/auth/discord/callback` (add `https://<your-domain>/auth/discord/callback` when you deploy).
+2. **OAuth2** → **Client Secret** → Reset Secret → copy it into `DISCORD_OAUTH_CLIENT_SECRET`.
+3. Generate a session secret and set the dashboard URL:
+   ```bash
+   openssl rand -hex 32   # SESSION_SECRET
+   ```
+   `DASHBOARD_URL=http://localhost:3000`
+4. Restart `pnpm dev` and open <http://localhost:3000>.
+
+The dashboard requests the `identify` and `guilds.members.read` scopes: the first to know who you are, the second to read your roles in the configured server for the role allowlist. The Discord access token is used for those two reads and then discarded.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -56,3 +72,5 @@ On first start the bot creates these forum tags if they are missing:
 | "could not create forum tags" in logs | Grant Manage Channels, or create the tags manually |
 | "Repository not found…" | Add the bot GitHub account as a collaborator on the repo |
 | "GitHub returned 401" | `GITHUB_BOT_TOKEN` is invalid or expired |
+| Dashboard login says "Invalid OAuth2 redirect_uri" | The redirect in the Developer Portal must match `DASHBOARD_URL` + `/auth/discord/callback` exactly |
+| Dashboard login returns "not on the allowlist" | Add your user ID to `ALLOWED_USER_IDS`, or a role you have to `ALLOWED_ROLE_IDS` |

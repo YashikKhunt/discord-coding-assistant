@@ -20,8 +20,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 | M2 | Docker sandbox, repo detection, deterministic `/runtest` | ✅ |
 | M3 | LLM layer + agent loop + budgets | ✅ |
 | M4 | GitHub finalize: patches, guardrails, PRs | ✅ |
-| M5 | Dashboard | ⏳ |
-| M6 | VPS deployment | — |
+| M5 | Dashboard | ✅ |
+| M6 | VPS deployment | ⏳ |
 
 ## Development
 
@@ -34,7 +34,7 @@ pnpm infra:up           # Postgres (dca, dca_test) + egress proxy for sandboxes
 pnpm sandbox:build      # sandbox images: dca-sandbox-node, dca-sandbox-python
 pnpm db:migrate
 pnpm bot:register       # once, and whenever commands change
-pnpm dev                # api + worker + bot with reload
+pnpm dev                # api + worker + bot + dashboard (http://localhost:3000) with reload
 ```
 
 | Script | Purpose |
@@ -93,6 +93,17 @@ envFile: .env.example         # copied to .env when .env is missing
 
 The bot never pushes to an existing branch, and a token without the `workflow` scope means GitHub itself rejects workflow changes.
 
+## Dashboard
+
+`http://localhost:3000` in development (Vite, proxying `/api` and `/auth` to the API); in production the API serves the built files from `apps/dashboard/dist`. Sign in with Discord (same allowlist as the bot; setup in [docs/SETUP-DISCORD.md](docs/SETUP-DISCORD.md#5-dashboard-sign-in-discord-oauth)).
+
+- **Jobs**: live list with status, type and repo filters, cost and duration.
+- **Job detail**: request, result (PR, test counts, likely cause), cost/steps/time against the job's limits, event timeline, and the **agent trace**: every model call with tokens, cache hit rate, cost and latency, and each tool call with its arguments, exit code and output.
+- **New job**: the same `/task`, `/bugreport` and `/runtest` inputs as Discord (results still post to the forum).
+- **Costs**: month-to-date spend against `MONTHLY_LLM_CAP_USD`, daily spend, spend by command and model, most expensive jobs, and per-command limits.
+
+Security: sessions are random tokens stored hashed in Postgres (HttpOnly, SameSite=Lax cookies, 7-day expiry); writes also require a same-origin `Origin` header; the bot's token-authenticated routes live under `/internal`.
+
 ## Agent loop and spend control
 
 `@dca/agent` runs its own tool loop on top of the Vercel AI SDK (one model call per step, tools executed by the worker):
@@ -107,7 +118,8 @@ The bot never pushes to an existing branch, and a token without the `workflow` s
 
 ```
 apps/
-  api/         Fastify: create/list/get/cancel jobs, repo checks, spend cap, attachments
+  api/         Fastify: internal job routes for the bot, dashboard API + Discord OAuth, serves the UI
+  dashboard/   Vite + React console: jobs, agent traces, new job, costs
   bot/         discord.js: slash commands, allowlist, forum publisher, notifier (outbox)
   worker/      claims jobs, heartbeats, reaps lost jobs; runners for /runtest (+ analysis) and /task, /bugreport
 packages/

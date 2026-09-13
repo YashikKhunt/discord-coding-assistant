@@ -158,6 +158,8 @@ export const jobCounters = pgTable("job_counters", {
 export const dashboardSessions = pgTable("dashboard_sessions", {
   id: text("id").primaryKey(),
   discordUserId: text("discord_user_id").notNull(),
+  username: text("username").notNull().default(""),
+  avatar: text("avatar"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: createdAt(),
 });

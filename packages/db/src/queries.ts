@@ -1,9 +1,10 @@
 import { formatShortId, type JobDto, type JobStatus, type JobType, sourcesFor } from "@dca/core";
-import { and, asc, count, desc, eq, gte, inArray, isNull, lt, sql, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, sql, sum } from "drizzle-orm";
 import type { Db } from "./client.ts";
 import {
   type Attachment,
   attachments,
+  dashboardSessions,
   type Job,
   type JobEvent,
   jobCounters,
@@ -348,4 +349,160 @@ export async function listAttachments(db: Db, jobId: string): Promise<Attachment
     .from(attachments)
     .where(eq(attachments.jobId, jobId))
     .orderBy(asc(attachments.createdAt));
+}
+
+// --- Dashboard ------------------------------------------------------------------------------
+
+export async function createSession(
+  db: Db,
+  session: {
+    id: string;
+    discordUserId: string;
+    username: string;
+    avatar: string | null;
+    expiresAt: Date;
+  },
+): Promise<void> {
+  await db.insert(dashboardSessions).values(session);
+}
+
+export async function getSession(db: Db, id: string, now = new Date()) {
+  const [session] = await db
+    .select()
+    .from(dashboardSessions)
+    .where(and(eq(dashboardSessions.id, id), gt(dashboardSessions.expiresAt, now)));
+  return session ?? null;
+}
+
+export async function deleteSession(db: Db, id: string): Promise<void> {
+  await db.delete(dashboardSessions).where(eq(dashboardSessions.id, id));
+}
+
+export async function deleteExpiredSessions(db: Db, now = new Date()): Promise<void> {
+  await db.delete(dashboardSessions).where(lt(dashboardSessions.expiresAt, now));
+}
+
+export interface JobPageFilter extends ListJobsFilter {
+  /** ISO timestamp of the last job on the previous page. */
+  before?: string;
+  repo?: string;
+}
+
+export async function listJobsPage(db: Db, filter: JobPageFilter = {}) {
+  const limit = Math.min(filter.limit ?? 25, 100);
+  const conditions = [
+    filter.status ? eq(jobs.status, filter.status) : undefined,
+    filter.type ? eq(jobs.type, filter.type) : undefined,
+    filter.repo ? eq(jobs.repo, filter.repo) : undefined,
+    filter.before ? lt(jobs.createdAt, new Date(filter.before)) : undefined,
+  ].filter((condition) => condition !== undefined);
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(desc(jobs.createdAt))
+    .limit(limit + 1);
+  const page = rows.slice(0, limit);
+  return {
+    jobs: page,
+    nextBefore: rows.length > limit ? (page.at(-1)?.createdAt.toISOString() ?? null) : null,
+  };
+}
+
+export async function getJobTrace(db: Db, jobId: string) {
+  const [events, calls, tools, files] = await Promise.all([
+    listJobEvents(db, jobId),
+    db
+      .select({
+        id: llmCalls.id,
+        step: llmCalls.step,
+        provider: llmCalls.provider,
+        model: llmCalls.model,
+        inputTokens: llmCalls.inputTokens,
+        outputTokens: llmCalls.outputTokens,
+        cachedTokens: llmCalls.cachedTokens,
+        costUsd: llmCalls.costUsd,
+        latencyMs: llmCalls.latencyMs,
+        response: llmCalls.response,
+        createdAt: llmCalls.createdAt,
+      })
+      .from(llmCalls)
+      .where(eq(llmCalls.jobId, jobId))
+      .orderBy(asc(llmCalls.step), asc(llmCalls.id)),
+    db.select().from(toolCalls).where(eq(toolCalls.jobId, jobId)).orderBy(asc(toolCalls.id)),
+    listAttachments(db, jobId),
+  ]);
+  return { events, llmCalls: calls, toolCalls: tools, attachments: files };
+}
+
+export interface CostReport {
+  monthSpendUsd: number;
+  byDay: { day: string; costUsd: number }[];
+  byType: { type: JobType; costUsd: number; jobs: number }[];
+  byModel: { model: string; costUsd: number; calls: number }[];
+  topJobs: Pick<Job, "shortId" | "type" | "repo" | "status" | "costUsd" | "createdAt">[];
+  jobCounts: { status: JobStatus; count: number }[];
+}
+
+/** Spend and activity since `since` (UTC), for the costs page. */
+export async function costReport(db: Db, since: Date, now = new Date()): Promise<CostReport> {
+  const day = sql<string>`to_char(date_trunc('day', ${llmCalls.createdAt} at time zone 'UTC'), 'YYYY-MM-DD')`;
+  const [monthSpend, byDay, byType, byModel, topJobs, jobCounts] = await Promise.all([
+    monthSpendUsd(db, now),
+    db
+      .select({ day, costUsd: sum(llmCalls.costUsd) })
+      .from(llmCalls)
+      .where(gte(llmCalls.createdAt, since))
+      .groupBy(day)
+      .orderBy(day),
+    db
+      .select({
+        type: jobs.type,
+        costUsd: sum(llmCalls.costUsd),
+        jobs: sql<number>`count(distinct ${jobs.id})`,
+      })
+      .from(llmCalls)
+      .innerJoin(jobs, eq(llmCalls.jobId, jobs.id))
+      .where(gte(llmCalls.createdAt, since))
+      .groupBy(jobs.type),
+    db
+      .select({ model: llmCalls.model, costUsd: sum(llmCalls.costUsd), calls: count() })
+      .from(llmCalls)
+      .where(gte(llmCalls.createdAt, since))
+      .groupBy(llmCalls.model),
+    db
+      .select({
+        shortId: jobs.shortId,
+        type: jobs.type,
+        repo: jobs.repo,
+        status: jobs.status,
+        costUsd: jobs.costUsd,
+        createdAt: jobs.createdAt,
+      })
+      .from(jobs)
+      .where(and(gte(jobs.createdAt, since), gt(jobs.costUsd, 0)))
+      .orderBy(desc(jobs.costUsd))
+      .limit(10),
+    db
+      .select({ status: jobs.status, count: count() })
+      .from(jobs)
+      .where(gte(jobs.createdAt, since))
+      .groupBy(jobs.status),
+  ]);
+  return {
+    monthSpendUsd: monthSpend,
+    byDay: byDay.map((row) => ({ day: row.day, costUsd: Number(row.costUsd ?? 0) })),
+    byType: byType.map((row) => ({
+      type: row.type,
+      costUsd: Number(row.costUsd ?? 0),
+      jobs: Number(row.jobs),
+    })),
+    byModel: byModel.map((row) => ({
+      model: row.model,
+      costUsd: Number(row.costUsd ?? 0),
+      calls: row.calls,
+    })),
+    topJobs,
+    jobCounts,
+  };
 }

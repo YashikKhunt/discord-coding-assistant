@@ -69,6 +69,8 @@ export const dashboardEnv = z.object({
   DISCORD_OAUTH_CLIENT_SECRET: z.string().min(1),
   DASHBOARD_URL: z.url(),
   SESSION_SECRET: z.string().min(32),
+  /** Built dashboard UI to serve from the API (production). */
+  DASHBOARD_DIST: z.string().default("./apps/dashboard/dist"),
 });
 
 export class ConfigError extends Error {

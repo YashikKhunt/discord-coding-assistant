@@ -27,8 +27,10 @@ import { getProfile } from "@dca/profiles";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import { z } from "zod";
 import { AttachmentRejectedError, downloadAttachments, type Fetcher } from "./attachments.ts";
+import { type DashboardDeps, dashboardPlugin } from "./dashboard.ts";
 
 export interface AppDeps {
+  dashboard?: DashboardDeps;
   db: Db;
   github: GitHubClient;
   internalToken: string;
@@ -69,6 +71,76 @@ const REPO_ACCESS_MESSAGES = {
   archived: "Repository is archived.",
 } as const;
 
+export type SubmitResult =
+  | { ok: true; response: CreateJobResponse }
+  | { ok: false; code: ApiErrorCode; message: string };
+
+/** Validates and enqueues a job. Shared by the bot's internal route and the dashboard. */
+export async function submitJob(
+  deps: AppDeps,
+  body: z.infer<typeof createJobRequest>,
+): Promise<SubmitResult> {
+  const repo = parseRepo(body.repo);
+  if (!repo)
+    return { ok: false, code: "invalid_repo", message: "Repository must be exactly `owner/repo`." };
+  if (body.type !== "runtest" && !body.input.description?.trim()) {
+    return { ok: false, code: "invalid_request", message: "A description is required." };
+  }
+
+  const access = await deps.github.checkRepoAccess(repo);
+  if (!access.ok) {
+    return { ok: false, code: "repo_not_accessible", message: REPO_ACCESS_MESSAGES[access.reason] };
+  }
+
+  const profile = getProfile(body.type);
+  const spent = await monthSpendUsd(deps.db);
+  if (spent + profile.limits.maxUsd > deps.monthlyLlmCapUsd) {
+    return {
+      ok: false,
+      code: "spend_cap_reached",
+      message: `Monthly LLM budget reached ($${spent.toFixed(2)} of $${deps.monthlyLlmCapUsd} used; this job may cost up to $${profile.limits.maxUsd}).`,
+    };
+  }
+
+  const jobId = randomUUID();
+  let stored: Awaited<ReturnType<typeof downloadAttachments>> = [];
+  try {
+    stored = await downloadAttachments(body.attachments, {
+      dir: deps.attachmentsDir,
+      jobId,
+      fetch: deps.fetch,
+    });
+  } catch (error) {
+    await rm(path.join(deps.attachmentsDir, jobId), { recursive: true, force: true });
+    if (error instanceof AttachmentRejectedError) {
+      return { ok: false, code: "attachment_rejected", message: error.message };
+    }
+    throw error;
+  }
+
+  const job = await createJob(deps.db, {
+    id: jobId,
+    type: body.type,
+    repo: repo.fullName,
+    ref: body.ref?.trim() || body.input.base?.trim() || null,
+    input: body.input,
+    requestedByDiscordId: body.requestedByDiscordId,
+    source: body.source,
+    profileId: profile.id,
+    profileVersion: profile.version,
+    modelPrimary: profile.model.primary,
+  });
+  if (stored.length) {
+    await deps.db
+      .insert(attachmentsTable)
+      .values(stored.map((attachment) => ({ ...attachment, jobId: job.id })));
+  }
+  return {
+    ok: true,
+    response: { job: toJobDto(job), position: await queuePosition(deps.db, job) },
+  };
+}
+
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({ logger: deps.logger ?? false });
 
@@ -91,123 +163,76 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   app.get("/healthz", async () => ({ ok: true }));
 
-  app.addHook("onRequest", async (request, reply) => {
-    if (request.url === "/healthz") return;
-    if (!tokensMatch(deps.internalToken, request.headers.authorization)) {
-      return sendError(reply, "unauthorized", "Missing or invalid internal token");
-    }
-  });
-
-  app.post("/jobs", async (request, reply) => {
-    const body = createJobRequest.parse(request.body);
-
-    const repo = parseRepo(body.repo);
-    if (!repo) return sendError(reply, "invalid_repo", "Repository must be exactly `owner/repo`.");
-    if (body.type !== "runtest" && !body.input.description?.trim()) {
-      return sendError(reply, "invalid_request", "A description is required.");
-    }
-
-    const access = await deps.github.checkRepoAccess(repo);
-    if (!access.ok) {
-      return sendError(reply, "repo_not_accessible", REPO_ACCESS_MESSAGES[access.reason]);
-    }
-
-    const profile = getProfile(body.type);
-    const spent = await monthSpendUsd(deps.db);
-    if (spent + profile.limits.maxUsd > deps.monthlyLlmCapUsd) {
-      return sendError(
-        reply,
-        "spend_cap_reached",
-        `Monthly LLM budget reached ($${spent.toFixed(2)} of $${deps.monthlyLlmCapUsd} used; this job may cost up to $${profile.limits.maxUsd}).`,
-      );
-    }
-
-    const jobId = randomUUID();
-    let stored: Awaited<ReturnType<typeof downloadAttachments>> = [];
-    try {
-      stored = await downloadAttachments(body.attachments, {
-        dir: deps.attachmentsDir,
-        jobId,
-        fetch: deps.fetch,
+  // Internal routes for the bot: bearer token only. Prefixed so they never collide with
+  // dashboard pages like /jobs/TASK-0001 when the API serves the UI.
+  app.register(
+    async (internal) => {
+      internal.addHook("onRequest", async (request, reply) => {
+        if (!tokensMatch(deps.internalToken, request.headers.authorization)) {
+          return sendError(reply, "unauthorized", "Missing or invalid internal token");
+        }
       });
-    } catch (error) {
-      await rm(path.join(deps.attachmentsDir, jobId), { recursive: true, force: true });
-      if (error instanceof AttachmentRejectedError) {
-        return sendError(reply, "attachment_rejected", error.message);
-      }
-      throw error;
-    }
 
-    const job = await createJob(deps.db, {
-      id: jobId,
-      type: body.type,
-      repo: repo.fullName,
-      ref: body.ref?.trim() || body.input.base?.trim() || null,
-      input: body.input,
-      requestedByDiscordId: body.requestedByDiscordId,
-      source: body.source,
-      profileId: profile.id,
-      profileVersion: profile.version,
-      modelPrimary: profile.model.primary,
-    });
-    if (stored.length) {
-      await deps.db
-        .insert(attachmentsTable)
-        .values(stored.map((attachment) => ({ ...attachment, jobId: job.id })));
-    }
+      internal.post("/jobs", async (request, reply) => {
+        const body = createJobRequest.parse(request.body);
+        const submitted = await submitJob(deps, body);
+        if (!submitted.ok) return sendError(reply, submitted.code, submitted.message);
+        return reply.status(201).send(submitted.response);
+      });
 
-    const response: CreateJobResponse = {
-      job: toJobDto(job),
-      position: await queuePosition(deps.db, job),
-    };
-    return reply.status(201).send(response);
-  });
+      internal.get("/jobs", async (request) => {
+        const query = listJobsQuery.parse(request.query);
+        const jobs = await listJobs(deps.db, {
+          limit: query.limit,
+          status: query.status,
+          type: query.type,
+          requestedByDiscordId: query.requestedBy,
+        });
+        return { jobs: jobs.map(toJobDto) };
+      });
 
-  app.get("/jobs", async (request) => {
-    const query = listJobsQuery.parse(request.query);
-    const jobs = await listJobs(deps.db, {
-      limit: query.limit,
-      status: query.status,
-      type: query.type,
-      requestedByDiscordId: query.requestedBy,
-    });
-    return { jobs: jobs.map(toJobDto) };
-  });
+      internal.get<{ Params: { shortId: string } }>("/jobs/:shortId", async (request, reply) => {
+        const parsed = parseShortId(request.params.shortId);
+        const job = parsed ? await getJobByShortId(deps.db, parsed.shortId) : null;
+        if (!job) return sendError(reply, "not_found", "Job not found.");
+        const events = await listJobEvents(deps.db, job.id);
+        return {
+          job: toJobDto(job),
+          position: await queuePosition(deps.db, job),
+          events: events.map((event) => ({
+            id: event.id,
+            type: event.type,
+            payload: event.payload,
+            createdAt: event.createdAt.toISOString(),
+          })),
+        };
+      });
 
-  app.get<{ Params: { shortId: string } }>("/jobs/:shortId", async (request, reply) => {
-    const parsed = parseShortId(request.params.shortId);
-    const job = parsed ? await getJobByShortId(deps.db, parsed.shortId) : null;
-    if (!job) return sendError(reply, "not_found", "Job not found.");
-    const events = await listJobEvents(deps.db, job.id);
-    return {
-      job: toJobDto(job),
-      position: await queuePosition(deps.db, job),
-      events: events.map((event) => ({
-        id: event.id,
-        type: event.type,
-        payload: event.payload,
-        createdAt: event.createdAt.toISOString(),
-      })),
-    };
-  });
+      internal.post<{ Params: { shortId: string } }>(
+        "/jobs/:shortId/cancel",
+        async (request, reply) => {
+          const parsed = parseShortId(request.params.shortId);
+          if (!parsed) return sendError(reply, "not_found", "Job not found.");
+          const outcome = await requestCancel(deps.db, parsed.shortId);
+          switch (outcome.kind) {
+            case "not_found":
+              return sendError(reply, "not_found", "Job not found.");
+            case "not_cancellable":
+              return sendError(
+                reply,
+                "not_cancellable",
+                `${outcome.job.shortId} is ${outcome.job.status} and can no longer be cancelled.`,
+              );
+            default:
+              return { outcome: outcome.kind, job: toJobDto(outcome.job) };
+          }
+        },
+      );
+    },
+    { prefix: "/internal" },
+  );
 
-  app.post<{ Params: { shortId: string } }>("/jobs/:shortId/cancel", async (request, reply) => {
-    const parsed = parseShortId(request.params.shortId);
-    if (!parsed) return sendError(reply, "not_found", "Job not found.");
-    const outcome = await requestCancel(deps.db, parsed.shortId);
-    switch (outcome.kind) {
-      case "not_found":
-        return sendError(reply, "not_found", "Job not found.");
-      case "not_cancellable":
-        return sendError(
-          reply,
-          "not_cancellable",
-          `${outcome.job.shortId} is ${outcome.job.status} and can no longer be cancelled.`,
-        );
-      default:
-        return { outcome: outcome.kind, job: toJobDto(outcome.job) };
-    }
-  });
+  if (deps.dashboard) app.register(dashboardPlugin(deps, deps.dashboard));
 
   return app;
 }

@@ -15,6 +15,13 @@
       "when": 1789248664888,
       "tag": "0001_loud_invaders",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789311617672,
+      "tag": "0002_productive_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }
