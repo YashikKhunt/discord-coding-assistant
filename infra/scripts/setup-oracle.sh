@@ -87,13 +87,19 @@ $SUDO netfilter-persistent save >/dev/null
 echo "ports 80 and 443 accepted locally (also add an ingress rule in the OCI security list)"
 
 log "Application directory: $APP_DIR"
-$SUDO mkdir -p "$APP_DIR" "$APP_DIR/backups"
+$SUDO mkdir -p "$APP_DIR"
 $SUDO chown -R "$USER_NAME":"$USER_NAME" "$APP_DIR"
 if [[ -d "$APP_DIR/.git" ]]; then
   git -C "$APP_DIR" pull --ff-only
 else
-  git clone --depth 50 "$REPO_URL" "$APP_DIR"
+  # Clone into a temporary directory and move the contents in: $APP_DIR may already
+  # hold files (backups, .env) and `git clone` refuses a non-empty target.
+  TMP_CLONE="$(mktemp -d)"
+  git clone --depth 50 "$REPO_URL" "$TMP_CLONE/repo"
+  ( shopt -s dotglob; mv "$TMP_CLONE/repo/"* "$APP_DIR/" )
+  rm -rf "$TMP_CLONE"
 fi
+mkdir -p "$APP_DIR/backups"
 
 log "Sandbox images (this takes a few minutes the first time)"
 $SUDO docker build -q -t dca-sandbox-node:latest "$APP_DIR/infra/images/sandbox-node"
