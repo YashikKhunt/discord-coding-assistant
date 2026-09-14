@@ -26,6 +26,11 @@ export interface DockerSandboxOptions {
   network?: string;
   /** Proxy URL injected as HTTP(S)_PROXY, e.g. `http://egress-proxy:3128`. */
   proxyUrl?: string;
+  /**
+   * Container running the proxy. Its IP is resolved and passed as `--add-host`, because
+   * Docker's embedded DNS (127.0.0.11) is not reachable from a gVisor sandbox.
+   */
+  proxyContainer?: string;
   dockerBin?: string;
 }
 
@@ -196,8 +201,10 @@ class DockerSandbox implements Sandbox {
 }
 
 export class DockerSandboxProvider implements SandboxProvider {
-  readonly #opts: Required<Omit<DockerSandboxOptions, "network" | "proxyUrl" | "defaultLimits">> &
-    Pick<DockerSandboxOptions, "network" | "proxyUrl" | "defaultLimits">;
+  readonly #opts: Required<
+    Omit<DockerSandboxOptions, "network" | "proxyUrl" | "proxyContainer" | "defaultLimits">
+  > &
+    Pick<DockerSandboxOptions, "network" | "proxyUrl" | "proxyContainer" | "defaultLimits">;
 
   constructor(options: DockerSandboxOptions = {}) {
     this.#opts = { runtime: "runc", dockerBin: "docker", ...options };
@@ -263,11 +270,19 @@ export class DockerSandboxProvider implements SandboxProvider {
       ...options.env,
     };
 
+    const hostEntries: string[] = [];
+    const proxyHost = proxyHostToResolve(proxyUrl);
+    if (proxyHost && this.#opts.proxyContainer) {
+      const ip = await this.#proxyIp(this.#opts.proxyContainer, network);
+      if (ip) hostEntries.push("--add-host", `${proxyHost}:${ip}`);
+    }
+
     const args = [
       "run",
       "-d",
       "--name",
       name,
+      ...hostEntries,
       ...labels.flatMap((l) => ["--label", l]),
       "--runtime",
       runtime,
@@ -309,6 +324,16 @@ export class DockerSandboxProvider implements SandboxProvider {
     return new DockerSandbox(bin, name, volume, baseEnv);
   }
 
+  /** IP of the proxy container on `network` (or its first network), empty when unavailable. */
+  async #proxyIp(container: string, network: string | undefined): Promise<string | null> {
+    const format = network
+      ? `{{with index .NetworkSettings.Networks "${network}"}}{{.IPAddress}}{{end}}`
+      : "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}";
+    const result = await docker(this.#opts.dockerBin, ["inspect", "-f", format, container]);
+    const ip = result.stdout.toString().trim().split(/\s+/)[0];
+    return result.code === 0 && ip ? ip : null;
+  }
+
   async reapOrphans(olderThanMs: number): Promise<number> {
     const { dockerBin: bin } = this.#opts;
     const list = await dockerOk(bin, [
@@ -329,6 +354,19 @@ export class DockerSandboxProvider implements SandboxProvider {
       removed++;
     }
     return removed;
+  }
+}
+
+const IP_ADDRESS = /^\d{1,3}(\.\d{1,3}){3}$|^\[?[0-9a-fA-F:]+\]?$/;
+
+/** Host part of a proxy URL that needs a hosts entry, or null when it is already an IP. */
+export function proxyHostToResolve(proxyUrl: string | undefined): string | null {
+  if (!proxyUrl) return null;
+  try {
+    const host = new URL(proxyUrl).hostname;
+    return IP_ADDRESS.test(host) || host === "localhost" ? null : host;
+  } catch {
+    return null;
   }
 }
 

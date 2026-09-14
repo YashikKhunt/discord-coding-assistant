@@ -22,6 +22,7 @@ services:
   # The only way out of the sandbox network. Sandboxes are attached to `sandbox`
   # (internal: no route to the internet) and reach registries through this proxy.
   egress-proxy:
+    container_name: dca-egress-proxy
     image: ubuntu/squid:6.13-25.04_beta
     restart: unless-stopped
     volumes:

@@ -26,6 +26,7 @@ const sandbox = new DockerSandboxProvider({
   runtime: env.SANDBOX_RUNTIME,
   network: env.SANDBOX_NETWORK || undefined,
   proxyUrl: env.SANDBOX_PROXY_URL || undefined,
+  proxyContainer: env.SANDBOX_PROXY_CONTAINER || undefined,
   defaultLimits: { cpus: env.SANDBOX_CPUS, memoryMb: env.SANDBOX_MEMORY_MB },
 });
 if (!env.SANDBOX_NETWORK) {

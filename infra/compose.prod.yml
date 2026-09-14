@@ -98,6 +98,7 @@ services:
   # Sandboxes attach to the `sandbox` network, which has no route to the internet;
   # this proxy is their only way out and only allows package registries.
   egress-proxy:
+    container_name: dca-egress-proxy
     image: ubuntu/squid:6.13-25.04_beta
     restart: unless-stopped
     volumes:

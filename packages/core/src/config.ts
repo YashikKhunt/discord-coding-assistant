@@ -58,6 +58,8 @@ export const workerEnv = z.object({
   /** Internal Docker network shared only with the egress proxy. Empty = no network at all. */
   SANDBOX_NETWORK: z.string().default(""),
   SANDBOX_PROXY_URL: z.string().default(""),
+  /** Proxy container, used to give sandboxes a hosts entry (gVisor cannot use Docker's DNS). */
+  SANDBOX_PROXY_CONTAINER: z.string().default("dca-egress-proxy"),
   SANDBOX_IMAGE_NODE: z.string().default("dca-sandbox-node:latest"),
   SANDBOX_IMAGE_PYTHON: z.string().default("dca-sandbox-python:latest"),
   /** Per-sandbox limits; lower these on small hosts so concurrent jobs still fit. */

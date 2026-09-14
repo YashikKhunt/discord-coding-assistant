@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AgentConfigError, parseAgentConfig } from "./agent-config.ts";
 import { DetectionError, planRepo, type RepoFiles, skippedPackages } from "./detect.ts";
+import { proxyHostToResolve } from "./docker.ts";
 
 function repo(files: Record<string, string>): RepoFiles {
   return {
@@ -164,5 +165,15 @@ testReport: build/junit.xml
     expect(() => parseAgentConfig("unknown: 1")).toThrow(AgentConfigError);
     expect(() => parseAgentConfig("image: [")).toThrow(/not valid YAML/);
     expect(parseAgentConfig("")).toEqual({});
+  });
+});
+
+describe("proxyHostToResolve", () => {
+  it("returns hosts that need a /etc/hosts entry", () => {
+    expect(proxyHostToResolve("http://egress-proxy:3128")).toBe("egress-proxy");
+    expect(proxyHostToResolve("http://172.18.0.2:3128")).toBeNull();
+    expect(proxyHostToResolve("http://localhost:3128")).toBeNull();
+    expect(proxyHostToResolve(undefined)).toBeNull();
+    expect(proxyHostToResolve("not a url")).toBeNull();
   });
 });

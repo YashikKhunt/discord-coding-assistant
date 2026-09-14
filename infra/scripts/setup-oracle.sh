@@ -107,7 +107,9 @@ $SUDO docker build -q -t dca-sandbox-python:latest "$APP_DIR/infra/images/sandbo
 
 log "Nightly backup at 03:20 UTC"
 CRON_LINE="20 3 * * * $APP_DIR/infra/scripts/backup.sh >> $APP_DIR/backups/backup.log 2>&1"
-( crontab -l 2>/dev/null | grep -v 'infra/scripts/backup.sh' ; echo "$CRON_LINE" ) | crontab -
+# `grep -v` exits 1 when the crontab is empty, which would abort the script under `set -e`.
+( { crontab -l 2>/dev/null || true; } | grep -v 'infra/scripts/backup.sh' || true; echo "$CRON_LINE" ) |
+  crontab -
 
 cat <<EOF
 
