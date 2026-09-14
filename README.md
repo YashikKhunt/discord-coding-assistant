@@ -22,7 +22,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
 | M3 | LLM layer + agent loop + budgets | ✅ |
 | M4 | GitHub finalize: patches, guardrails, PRs | ✅ |
 | M5 | Dashboard | ✅ |
-| M6 | VPS deployment | ⏳ |
+| M6 | Deployment on a free Oracle Cloud VM (24/7) | ✅ |
 
 ## Development
 
