@@ -167,5 +167,5 @@ gunzip -c backups/dca-<stamp>.sql.gz | \
 | `caddy` logs "no such host" | DNS `A` record is missing or not propagated yet |
 | Jobs stay `queued` | `docker compose -f infra/compose.prod.yml logs worker`; usually Docker socket permissions or a missing sandbox image |
 | Sandboxes fail to start | `docker run --rm --runtime=runsc alpine:3 true`; if it fails, set `SANDBOX_RUNTIME=runc` |
-| Dependency installs fail in a sandbox | The host must reach the registries; check `docker compose logs egress-proxy` |
+| Dependency installs fail in a sandbox | The host must reach the registries; check `docker compose logs egress-proxy`. Sandboxes get the proxy's IP as a hosts entry because Docker's embedded DNS is unreachable under gVisor; if the proxy container was recreated, restart the worker so new sandboxes pick up its address |
 | Out of disk | `docker system prune -af --volumes` (keeps named volumes in use), and check `backups/` |
