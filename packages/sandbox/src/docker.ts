@@ -18,6 +18,8 @@ const DEFAULT_LIMITS: ResourceLimits = { cpus: 2, memoryMb: 2048, pids: 512 };
 const MAX_OUTPUT_BYTES = 200_000;
 
 export interface DockerSandboxOptions {
+  /** Applied to every sandbox unless `create` overrides them. */
+  defaultLimits?: Partial<ResourceLimits>;
   /** `runc` locally, `runsc` (gVisor) on the VPS. */
   runtime?: "runc" | "runsc";
   /** Docker network for sandboxes. Use an `--internal` network that only reaches the egress proxy. */
@@ -194,8 +196,8 @@ class DockerSandbox implements Sandbox {
 }
 
 export class DockerSandboxProvider implements SandboxProvider {
-  readonly #opts: Required<Omit<DockerSandboxOptions, "network" | "proxyUrl">> &
-    Pick<DockerSandboxOptions, "network" | "proxyUrl">;
+  readonly #opts: Required<Omit<DockerSandboxOptions, "network" | "proxyUrl" | "defaultLimits">> &
+    Pick<DockerSandboxOptions, "network" | "proxyUrl" | "defaultLimits">;
 
   constructor(options: DockerSandboxOptions = {}) {
     this.#opts = { runtime: "runc", dockerBin: "docker", ...options };
@@ -203,7 +205,7 @@ export class DockerSandboxProvider implements SandboxProvider {
 
   async create(options: CreateSandboxOptions): Promise<Sandbox> {
     const { dockerBin: bin, runtime, network, proxyUrl } = this.#opts;
-    const limits = { ...DEFAULT_LIMITS, ...options.limits };
+    const limits = { ...DEFAULT_LIMITS, ...this.#opts.defaultLimits, ...options.limits };
     const suffix = randomUUID().slice(0, 8);
     const name = `dca-sbx-${options.jobId.slice(0, 8)}-${suffix}`;
     const volume = `${name}-ws`;

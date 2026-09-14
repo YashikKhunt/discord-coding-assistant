@@ -57,6 +57,21 @@ describe.skipIf(!ENABLED)("DockerSandboxProvider (integration)", { timeout: 60_0
     },
   );
 
+  it("applies the provider's default limits", async () => {
+    const limited = new DockerSandboxProvider({ defaultLimits: { cpus: 1, memoryMb: 512 } });
+    const box = await limited.create({ jobId: "00000000-limits", image: IMAGE });
+    try {
+      const inspect = execFileSync(
+        "docker",
+        ["inspect", box.id, "--format", "{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}"],
+        { encoding: "utf8" },
+      ).trim();
+      expect(inspect).toBe(`${1_000_000_000} ${512 * 1024 * 1024}`);
+    } finally {
+      await box.destroy();
+    }
+  });
+
   it("reports exit codes, env and stderr", async () => {
     const result = await sandbox.exec('echo "$GREETING" && echo oops >&2 && exit 3', {
       env: { GREETING: "hi" },

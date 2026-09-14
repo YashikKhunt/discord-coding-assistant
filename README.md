@@ -9,7 +9,8 @@ A self-hosted, autonomous coding agent driven from Discord.
 
 Jobs are queued in Postgres, executed by workers that run an LLM agent loop (Anthropic / OpenAI / OpenRouter) against an isolated Docker sandbox, and results are posted to a Discord forum channel.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design and
+[docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) for running it 24/7 on a free Oracle Cloud VM.
 
 ## Status
 

@@ -26,6 +26,7 @@ const sandbox = new DockerSandboxProvider({
   runtime: env.SANDBOX_RUNTIME,
   network: env.SANDBOX_NETWORK || undefined,
   proxyUrl: env.SANDBOX_PROXY_URL || undefined,
+  defaultLimits: { cpus: env.SANDBOX_CPUS, memoryMb: env.SANDBOX_MEMORY_MB },
 });
 if (!env.SANDBOX_NETWORK) {
   log.warn("SANDBOX_NETWORK is empty: sandboxes have no network, dependency installs will fail");

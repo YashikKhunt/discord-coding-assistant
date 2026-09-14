@@ -1,0 +1,151 @@
+# Production stack for a single VPS (Oracle Ampere A1: 2 cores / 12 GB).
+# Usage: docker compose -f infra/compose.prod.yml --env-file .env up -d --build
+name: dca
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  image: dca-app:latest
+  restart: unless-stopped
+  env_file: ../.env
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: postgres://dca:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/dca
+    API_URL: http://api:4000
+    API_HOST: 0.0.0.0
+    ATTACHMENTS_DIR: /data/attachments
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dca
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: dca
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dca -d dca"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1g
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  api:
+    <<: *app
+    command: ["node_modules/.bin/tsx", "apps/api/src/main.ts"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://dca:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/dca
+      API_HOST: 0.0.0.0
+      ATTACHMENTS_DIR: /data/attachments
+      DASHBOARD_DIST: /app/apps/dashboard/dist
+    volumes:
+      - attachments:/data/attachments
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    mem_limit: 512m
+
+  bot:
+    <<: *app
+    command: ["node_modules/.bin/tsx", "apps/bot/src/main.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    mem_limit: 512m
+
+  worker:
+    <<: *app
+    command: ["node_modules/.bin/tsx", "apps/worker/src/main.ts"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://dca:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/dca
+      ATTACHMENTS_DIR: /data/attachments
+      WORKSPACES_DIR: /data/workspaces
+      SANDBOX_NETWORK: dca_sandbox
+      SANDBOX_PROXY_URL: http://egress-proxy:3128
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-runsc}
+    volumes:
+      - attachments:/data/attachments
+      - workspaces:/data/workspaces
+      # The worker starts sandbox containers on the host daemon. This is root-equivalent
+      # access to the host: the worker never runs repository code itself, and everything
+      # untrusted stays inside the sandboxes it creates.
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 1g
+
+  # Sandboxes attach to the `sandbox` network, which has no route to the internet;
+  # this proxy is their only way out and only allows package registries.
+  egress-proxy:
+    image: ubuntu/squid:6.13-25.04_beta
+    restart: unless-stopped
+    volumes:
+      - ./proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/3128'"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks: [sandbox, egress]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  default:
+  sandbox:
+    internal: true
+  egress: {}
+
+volumes:
+  pgdata:
+  attachments:
+  workspaces:
+  caddy_data:
+  caddy_config:
+  caddy_logs:

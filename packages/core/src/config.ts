@@ -60,6 +60,9 @@ export const workerEnv = z.object({
   SANDBOX_PROXY_URL: z.string().default(""),
   SANDBOX_IMAGE_NODE: z.string().default("dca-sandbox-node:latest"),
   SANDBOX_IMAGE_PYTHON: z.string().default("dca-sandbox-python:latest"),
+  /** Per-sandbox limits; lower these on small hosts so concurrent jobs still fit. */
+  SANDBOX_CPUS: z.coerce.number().positive().max(16).default(2),
+  SANDBOX_MEMORY_MB: z.coerce.number().int().min(512).max(65536).default(2048),
   ATTACHMENTS_DIR: z.string().default("./data/attachments"),
   WORKSPACES_DIR: z.string().default("./data/workspaces"),
   RETENTION_DAYS: z.coerce.number().int().positive().default(30),
