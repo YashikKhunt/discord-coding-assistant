@@ -145,6 +145,56 @@ Backups run at 03:20 UTC, keep 7 days locally, and upload a copy. Test it now:
 
 ---
 
+## Continuous deployment
+
+Every push to `main` (including a merged PR) runs the `check` job in
+`.github/workflows/ci.yml`; if it passes, the `deploy` job SSHes in and ships that commit.
+Nothing deploys from a pull request, and `concurrency: production-deploy` keeps two
+deploys from overlapping.
+
+The CI key is restricted to a forced command, `infra/scripts/ci-deploy.sh`, which takes the
+commit SHA, verifies it is an ancestor of `origin/main`, fast-forwards and runs
+`deploy.sh`. So the job deploys the SHA that passed CI rather than whatever `main` has
+drifted to, and a leaked key cannot open a shell on the box.
+
+### One-time setup
+
+Generate a dedicated key — do not reuse `oracle_dca`, which is yours and has a passphrase:
+
+```bash
+ssh-keygen -t ed25519 -N "" -C "gha-deploy" -f ~/.ssh/dca_deploy
+```
+
+Authorise it on the instance, restricted to the deploy script:
+
+```bash
+printf 'restrict,command="/opt/dca/infra/scripts/ci-deploy.sh" %s\n' "$(cat ~/.ssh/dca_deploy.pub)" | ssh ubuntu@<PUBLIC_IP> 'cat >> ~/.ssh/authorized_keys'
+```
+
+Set the repository secrets:
+
+```bash
+gh secret set DEPLOY_SSH_KEY < ~/.ssh/dca_deploy
+ssh-keyscan -t ed25519 <PUBLIC_IP> 2>/dev/null | gh secret set DEPLOY_KNOWN_HOSTS
+gh secret set DEPLOY_HOST --body "<PUBLIC_IP>"
+gh secret set DEPLOY_USER --body "ubuntu"
+gh secret set DEPLOY_HEALTH_URL --body "https://<SUBDOMAIN>.duckdns.org/healthz"
+```
+
+`ssh-keyscan` output is pinned as a secret deliberately: the job never uses
+`StrictHostKeyChecking=no`. Compare it against your own `known_hosts`
+(`ssh-keygen -F <PUBLIC_IP>`) before trusting it.
+
+The forced command points at a script that only reaches the instance once this commit is
+deployed, so the **first** CI deploy fails. Pull it in by hand once, then re-run the job:
+
+```bash
+ssh ubuntu@<PUBLIC_IP> 'cd /opt/dca && ./infra/scripts/deploy.sh --pull'
+```
+
+Optionally, add a required reviewer to the `production` environment in the repository
+settings to turn automatic deploys into one-click approvals.
+
 ## Updating
 
 ```bash
@@ -169,3 +219,6 @@ gunzip -c backups/dca-<stamp>.sql.gz | \
 | Sandboxes fail to start | `docker run --rm --runtime=runsc alpine:3 true`; if it fails, set `SANDBOX_RUNTIME=runc` |
 | Dependency installs fail in a sandbox | The host must reach the registries; check `docker compose logs egress-proxy`. Sandboxes get the proxy's IP as a hosts entry because Docker's embedded DNS is unreachable under gVisor; if the proxy container was recreated, restart the worker so new sandboxes pick up its address |
 | Out of disk | `docker system prune -af --volumes` (keeps named volumes in use), and check `backups/` |
+| `deploy` job times out connecting | Port 22 must be open to any address: GitHub runner IPs vary. Check the OCI security list and `sudo iptables -S INPUT` |
+| `deploy` job fails with "not an ancestor of origin/main" | The commit was force-pushed away from `main`; re-run CI on the current `main` |
+| `deploy` job exits 64 | Something invoked the CI key without a SHA — expected if you SSH with `dca_deploy` by hand |
