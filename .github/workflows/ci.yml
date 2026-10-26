@@ -43,3 +43,50 @@ jobs:
       - name: Build sandbox images
         run: pnpm sandbox:build
       - run: pnpm test
+
+  deploy:
+    # Merges into main arrive as pushes; pull_request runs must never deploy.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # On the job, not the workflow: at workflow level this would also serialise PR CI.
+    # Never cancel in progress — a half-finished deploy is worse than a queued one.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    environment: production
+    steps:
+      - name: Deploy to the VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # The remote end forces infra/scripts/ci-deploy.sh, which deploys this exact
+          # SHA rather than whatever origin/main happens to be a few pushes later.
+          ssh -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=30 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "$GIT_SHA"
+
+      - name: Verify production health
+        env:
+          HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL }}
+        run: |
+          for attempt in $(seq 1 10); do
+            if curl -fsS --max-time 10 "$HEALTH_URL" | grep -q '"ok":true'; then
+              echo "$HEALTH_URL reports healthy"
+              exit 0
+            fi
+            echo "attempt $attempt: not healthy yet"
+            sleep 10
+          done
+          echo "$HEALTH_URL never reported healthy after deploy" >&2
+          exit 1

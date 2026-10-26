@@ -15,17 +15,32 @@ fi
 echo "==> Building images"
 "${COMPOSE[@]}" build
 
+# compose build does not cover these: the worker starts them from a local tag, so a
+# change under infra/images/sandbox-* would otherwise never reach production.
+echo "==> Building sandbox images"
+docker build -q -t dca-sandbox-node:latest infra/images/sandbox-node
+docker build -q -t dca-sandbox-python:latest infra/images/sandbox-python
+
 echo "==> Starting services"
 # The api applies database migrations on start.
 "${COMPOSE[@]}" up -d --remove-orphans
 
 echo "==> Waiting for health"
+healthy=
 for _ in $(seq 1 30); do
   if [[ "$("${COMPOSE[@]}" ps --format json | jq -rs '[.[] | select(.Service=="api") | .Health] | first')" == "healthy" ]]; then
+    healthy=1
     break
   fi
   sleep 5
 done
+
+if [[ -z "$healthy" ]]; then
+  echo "==> api did not become healthy within 150s" >&2
+  "${COMPOSE[@]}" ps
+  "${COMPOSE[@]}" logs --tail 50 api
+  exit 1
+fi
 
 "${COMPOSE[@]}" ps
 echo
